@@ -6,6 +6,7 @@ import { InputDialog } from "./inputdialog";
 import { createElement, array_last, array_remove, createOptionElement } from "./util";
 import { LabelSlider } from "./labeledslider";
 import { AvatarCropper } from "./avatarcropper";
+import { showAlert, showConfirm, showPrompt } from "./nativedialogs";
 
 // what fucked up design pattern is this //
 export class GradientEditButton extends Widget {
@@ -95,7 +96,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
                 presetSelect.selectedOptions[0].value = JSON.stringify(this.gradientInfo);
                 AvatarCropper.saveSettings();
             }  else {
-                alert("Please select a valid preset or save as new preset.");
+                showAlert("Please select a valid preset or save as new preset.");
             }
         });
         presetRow.appendChild(overwrite);
@@ -103,33 +104,38 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         let saveNew = createElement("button");
         saveNew.innerText = "Save as new preset";
         saveNew.addEventListener("click", () => {
-            let name = prompt("Name the new preset:");
-            if (name === null) {
-                // cancelled
-            } else if (!name) {
-                alert("That name is invalid.");
-            } else {
-                if (AvatarCropper.settings.borderPresets.some(preset => preset.name.toLowerCase() === name.toLowerCase())) {
-                    alert("That name is already taken.");
+            showPrompt("Name the new preset:").then(name => {
+                if (name === null) {
+                    // cancelled
+                } else if (!name) {
+                    showAlert("That name is invalid.");
                 } else {
-                    this.gradientInfo.name = name;
-                    AvatarCropper.settings.borderPresets.push(this.gradientInfo);
-                    AvatarCropper.saveSettings();
-                    presetSelect.add(createOptionElement(name, JSON.stringify(this.gradientInfo)));
-                    presetSelect.selectedIndex = AvatarCropper.settings.borderPresets.length; // no - 1 because theres an extra at the beginning of the select
+                    if (AvatarCropper.settings.borderPresets.some(preset => preset.name.toLowerCase() === name.toLowerCase())) {
+                        showAlert("That name is already taken.");
+                    } else {
+                        this.gradientInfo.name = name;
+                        AvatarCropper.settings.borderPresets.push(this.gradientInfo);
+                        AvatarCropper.saveSettings();
+                        presetSelect.add(createOptionElement(name, JSON.stringify(this.gradientInfo)));
+                        presetSelect.selectedIndex = AvatarCropper.settings.borderPresets.length; // no - 1 because theres an extra at the beginning of the select
+                    }
                 }
-            }
+            });
         });
         presetRow.appendChild(saveNew);
 
         let deletePreset = createElement("button");
         deletePreset.innerText = "Delete this preset";
         deletePreset.addEventListener("click", () => {
-            if (presetSelect.value && confirm("Are you sure you want to delete this preset?")) {
-                let index = presetSelect.selectedIndex - 1;
-                AvatarCropper.settings.borderPresets.splice(index, 1);
-                AvatarCropper.saveSettings();
-                presetSelect.remove(index + 1);
+            if (presetSelect.value) {
+                showConfirm("Are you sure you want to delete this preset?").then(confirmed => {
+                    if (confirmed) {
+                        let index = presetSelect.selectedIndex - 1;
+                        AvatarCropper.settings.borderPresets.splice(index, 1);
+                        AvatarCropper.saveSettings();
+                        presetSelect.remove(index + 1);
+                    }
+                });
             }
         });
         presetRow.appendChild(deletePreset);

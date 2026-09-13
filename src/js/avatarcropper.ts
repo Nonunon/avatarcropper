@@ -20,6 +20,7 @@ import { KeyManager } from './keymanager'
 import { Border, GradientInfo } from './borders'
 import { Canvas } from './canvas'
 import { GradientEditButton } from './gradientedit'
+import { showAlert, showPrompt } from './nativedialogs'
 
 export interface Settings {
     previewSizes: number[]
@@ -137,7 +138,7 @@ export class AvatarCropper extends Widget {
         document.body.appendChild(this.textOverlay)
 
         if (getIEVersion() !== false && !AvatarCropper.settings.dismissedIE) {
-            window.alert(
+            showAlert(
                 "hey so your browser isn't really supported ... things should still work but they will be slower/ugly due to how internet explorer/edge function (They don't conform to web standards). i'd recommend switching to firefox or chrome!! but you don't have to if you don't want to. this is the only time you'll see this message unless u clear ur cache or something. ok bye",
             )
 
@@ -468,20 +469,21 @@ export class AvatarCropper extends Widget {
             '\n' +
             'Enter in a size either by specifying a number (like 64) or a percentage of width (50%w) or height (50%h)'
 
-        let sizeStr = window.prompt(promptStr)
-        if (sizeStr === null || isNaN(parseInt(sizeStr))) {
-            return
-        }
+        showPrompt(promptStr).then(sizeStr => {
+            if (sizeStr === null || isNaN(parseInt(sizeStr))) {
+                return
+            }
 
-        let size = parseInt(sizeStr)
+            let size = parseInt(sizeStr)
 
-        if (sizeStr.endsWith('%w')) {
-            size = this.cropView.innerSize.x * (size / 100)
-        } else if (sizeStr.endsWith('%h')) {
-            size = this.cropView.innerSize.y * (size / 100)
-        }
+            if (sizeStr.endsWith('%w')) {
+                size = this.cropView.innerSize.x * (size / 100)
+            } else if (sizeStr.endsWith('%h')) {
+                size = this.cropView.innerSize.y * (size / 100)
+            }
 
-        this.cropView.setCropSize(size)
+            this.cropView.setCropSize(size)
+        })
     }
 
     private toggleResizeLock(): void {
@@ -594,22 +596,22 @@ export class AvatarCropper extends Widget {
     }
 
     private promptAddPreview(): void {
-        let sizeStr = window.prompt(
+        showPrompt(
             'Enter a Custom Size\nDefault sizes are: 30, 40, 64, and 128.\nNote: 30 will come with a Discord online indicator.',
-        )
+        ).then(sizeStr => {
+            if (sizeStr === null) {
+                // cancelled
+                return
+            }
 
-        if (sizeStr === null) {
-            // cancelled
-            return
-        }
+            let size = parseInt(sizeStr)
 
-        let size = parseInt(sizeStr)
-
-        if (isNaN(size) || size <= 0) {
-            alert("Please, dear god, enter a size above 0...")
-        } else {
-            this.previews.addPreviewSize(new Point(size)) // emits sizeArrayChange event which changes settings so dw
-        }
+            if (isNaN(size) || size <= 0) {
+                showAlert("Please, dear god, enter a size above 0...")
+            } else {
+                this.previews.addPreviewSize(new Point(size)) // emits sizeArrayChange event which changes settings so dw
+            }
+        })
     }
 
     private openFile(file: File): void {
