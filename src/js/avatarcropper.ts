@@ -21,6 +21,9 @@ import { Border, GradientInfo } from './borders'
 import { Canvas } from './canvas'
 import { GradientEditButton } from './gradientedit'
 import { showAlert, showPrompt } from './nativedialogs'
+import { DiscordProfile } from './discordprofile'
+import { DiscordPicker } from './discordpicker'
+import { DiscordLook, defaultLook } from './discordlook'
 
 export interface Settings {
     previewSizes: number[]
@@ -36,6 +39,8 @@ export interface Settings {
     resizeLock: boolean
     borderSize: number
     borderPresets: GradientInfo[]
+    discordPreview: boolean
+    discordLook: DiscordLook
 }
 
 export class AvatarCropper extends Widget {
@@ -53,6 +58,9 @@ export class AvatarCropper extends Widget {
     private antialiasButton: HTMLElement
     private textOverlay: HTMLLabelElement
     private borderSelect: HTMLSelectElement;
+    private discordButton: HTMLElement
+    private discordProfile: DiscordProfile
+    private discordPicker: DiscordPicker
 
     private menuToggle: boolean = true
     private firstOpened: boolean = false
@@ -70,7 +78,9 @@ export class AvatarCropper extends Widget {
         guidesEnabled: true,
         resizeLock: false,
         borderSize: 0.05,
-        borderPresets: Border.defaults
+        borderPresets: Border.defaults,
+        discordPreview: false,
+        discordLook: defaultLook
     }
 
     constructor(container: HTMLElement) {
@@ -84,6 +94,7 @@ export class AvatarCropper extends Widget {
         this.previews = new Previews(this.cropView)
 
         this.appendChild(this.cropView, this.previews)
+        this.constructDiscordPreview()
 
         AvatarCropper.settings.previewSizes.forEach(size => {
             this.previews.addPreviewSize(new Point(size))
@@ -248,6 +259,11 @@ export class AvatarCropper extends Widget {
         )
         this.toggleMaskOutline(false)
         this.menu.appendChild(this.maskOutlineButton)
+
+        this.discordButton = createElement('button', 'item')
+        this.discordButton.innerText = 'Discord Profile Preview'
+        this.discordButton.addEventListener('click', () => this.toggleDiscordPreview())
+        this.menu.appendChild(this.discordButton)
         
 
         let tSlider = new LabelSlider(
@@ -441,6 +457,36 @@ export class AvatarCropper extends Widget {
         this.menu.appendChild(borderSlider.container)
 
         this.appendChild(this.menu)
+    }
+
+    private constructDiscordPreview(): void {
+        this.discordProfile = new DiscordProfile(this.cropView)
+        this.discordProfile.setLook(AvatarCropper.settings.discordLook)
+        this.discordProfile.on('close', () => this.toggleDiscordPreview(false))
+        this.discordProfile.on('customize', () => this.discordPicker.open(AvatarCropper.settings.discordLook))
+        this.appendChild(this.discordProfile)
+
+        this.discordPicker = new DiscordPicker(AvatarCropper.settings.discordLook)
+        this.discordPicker.on('change', (look: DiscordLook) => {
+            AvatarCropper.settings.discordLook = look
+            this.discordProfile.setLook(look)
+            AvatarCropper.saveSettings();
+        })
+        this.discordPicker.on('openavatar', (file: File) => this.openFile(file))
+        document.getElementById('container').appendChild(this.discordPicker.container)
+
+        this.toggleDiscordPreview(AvatarCropper.settings.discordPreview)
+    }
+
+    private toggleDiscordPreview(enabled: boolean = !AvatarCropper.settings.discordPreview): void {
+        AvatarCropper.settings.discordPreview = enabled
+        this.discordButton.classList.toggle('toggled', enabled)
+        if (enabled) {
+            this.discordProfile.show()
+        } else {
+            this.discordProfile.hide()
+        }
+        AvatarCropper.saveSettings();
     }
 
     private flipHorizontal(): void {
