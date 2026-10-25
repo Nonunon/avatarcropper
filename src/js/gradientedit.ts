@@ -34,7 +34,7 @@ export class GradientEditButton extends Widget {
     public set gradient(gradient: GradientInfo) {
         if (gradient !== null) {
             this._gradient = gradient;
-            Border.applyGradientToCanvas(gradient, this.canvas);
+            Border.fillGradient(this.canvas.context, gradient, this.canvas.width, this.canvas.height);
         }
     }
 
@@ -62,7 +62,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         // preview canvas //
         this.previewCanvas = new Canvas({ size: new Point(500) });
         this.previewCanvas.canvas.classList.add("preview")
-        Border.applyGradientToCanvas(this.gradientInfo, this.previewCanvas);
+        Border.fillGradient(this.previewCanvas.context, this.gradientInfo, this.previewCanvas.width, this.previewCanvas.height);
         leftCol.appendChild(this.previewCanvas.canvas);
 
         // presets //
@@ -232,7 +232,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
 
     private _draw(): void {
         if (this.gradientSlider.dirty || this.dirty) {
-            Border.applyGradientToCanvas(this.gradientInfo, this.previewCanvas);
+            Border.fillGradient(this.previewCanvas.context, this.gradientInfo, this.previewCanvas.width, this.previewCanvas.height);
             this.gradientSlider.draw();
             this.dirty = false;
         }
@@ -378,7 +378,7 @@ class GradientSlider extends Widget {
     }
 
     public draw(): void {
-        Border.applyGradientToCanvas({ angle: 270, gradient: this.stops, name: "" }, this.gradientCanvas);
+        Border.fillGradient(this.gradientCanvas.context, { angle: 270, gradient: this.stops, name: "" }, this.gradientCanvas.width, this.gradientCanvas.height);
         this.dirty = false;
     }
 

@@ -1,5 +1,3 @@
-import { Canvas } from "./canvas";
-import { Point } from "./point";
 import { Border } from "./borders";
 import { settings, borderKeys } from "./state";
 
@@ -58,18 +56,20 @@ export function drawArea(
 }
 
 // border overlays are cached per size and rebuilt when the border settings change //
-let borderCache = new Map<string, Canvas>();
+let borderCache = new Map<string, HTMLCanvasElement>();
 settings.subscribe(borderKeys, () => borderCache.clear());
 
-export function borderCanvas(width: number, height: number): Canvas | null {
+export function borderCanvas(width: number, height: number): HTMLCanvasElement | null {
     if (Border.type === "none" || Border.size === 0) {
         return null;
     }
     let key = width + "x" + height;
     let cached = borderCache.get(key);
     if (!cached) {
-        cached = new Canvas({ size: new Point(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))) });
-        Border.apply(cached);
+        cached = document.createElement("canvas");
+        cached.width = Math.max(1, Math.round(width));
+        cached.height = Math.max(1, Math.round(height));
+        Border.draw(cached.getContext("2d"), cached.width, cached.height);
         borderCache.set(key, cached);
     }
     return cached;
@@ -97,7 +97,7 @@ export function compose(
 
     if (options.border !== false) {
         let border = borderCanvas(width, height);
-        border && ctx.drawImage(border.canvas, 0, 0, width, height);
+        border && ctx.drawImage(border, 0, 0, width, height);
     }
 
     if (options.shape === "circle") {

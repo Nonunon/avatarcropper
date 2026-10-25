@@ -1,9 +1,7 @@
 import { CropView } from "./cropview";
 import { createElement, hideElement, showElement, makePixelated } from "./util";
 import { FractionalProgressBar } from "./fractionalprogressbar";
-import { Canvas } from "./canvas";
 import { ClosableDialog } from "./closabledialog";
-import { Point } from "./point";
 import { settings } from "./state";
 import { compose, bannerArea } from "./compose";
 import type { Rect, CropGeometry } from "./compose";
@@ -155,10 +153,10 @@ export class Renderer extends ClosableDialog {
                     width: gif.get_canvas().width,
                     height: gif.get_canvas().height,
                     delay: (i: number) => gif.get_frames()[i].delay * 10 || 100,
-                    draw: async (i: number, target: Canvas) => {
+                    draw: async (i: number, target: CanvasRenderingContext2D) => {
                         gif.move_to(i);
-                        target.clear();
-                        target.drawImage(gif.get_canvas(), new Point(0));
+                        target.clearRect(0, 0, target.canvas.width, target.canvas.height);
+                        target.drawImage(gif.get_canvas(), 0, 0);
                     },
                     close: () => { },
                 });
@@ -197,7 +195,7 @@ export class Renderer extends ClosableDialog {
         let banner = settings.state.banneroutlinesEnabled;
         let area = banner ? bannerArea(geo.crop) : geo.crop;
         let crop = this.canvas(area.width, area.height);
-        let frame = new Canvas({ size: new Point(source.width, source.height) });
+        let frame = this.canvas(source.width, source.height);
         let encoder = createEncoder(format, crop.canvas.width, crop.canvas.height);
 
         // gif spends most of its time in the workers afterwards, the others while adding frames //

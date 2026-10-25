@@ -1,5 +1,3 @@
-import { Canvas } from "./canvas";
-
 // frame access for animated images through the browser's own decoder (WebCodecs ImageDecoder).
 // it handles GIF, animated WebP, APNG and animated AVIF, and hands back fully composited frames.
 // where it's missing (older Firefox/Safari), GIFs still go through supergif and the rest stay static //
@@ -12,7 +10,7 @@ export interface FrameSource {
     height: number;
     // delay in ms for frame i //
     delay(i: number): number;
-    draw(i: number, target: Canvas): Promise<void>;
+    draw(i: number, target: CanvasRenderingContext2D): Promise<void>;
     close(): void;
 }
 
@@ -82,11 +80,11 @@ export async function openFrames(file: Blob, type: string): Promise<FrameSource 
             // browsers play near-zero delays at 100ms, so match what the cropper showed //
             return ms === undefined || ms <= 10 ? 100 : ms;
         },
-        draw: async (i: number, target: Canvas) => {
+        draw: async (i: number, target: CanvasRenderingContext2D) => {
             let frame = (await decoder.decode({ frameIndex: i })).image;
             delays[i] = Math.round((frame.duration || 0) / 1000);
-            target.clear();
-            target.context.drawImage(frame, 0, 0, width, height);
+            target.clearRect(0, 0, width, height);
+            target.drawImage(frame, 0, 0, width, height);
             frame.close();
         },
         close: () => decoder.close(),
