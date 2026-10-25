@@ -9,6 +9,7 @@ import { KeyManager, Keys } from "./keymanager";
 import { Drawer } from "./drawer";
 import { showAlert } from "./nativedialogs";
 import { isAnimated, canDecodeFrames } from "./frames";
+import type { CropGeometry } from "./compose";
 
 type MouseAction = "move" | "resize" | "new" | "none";
 
@@ -177,6 +178,26 @@ export class CropView extends Drawer {
 
     public get rotation(): number {
         return this.currentRotation;
+    }
+
+    // a plain snapshot of everything the compositor needs //
+    public get geometry(): CropGeometry {
+        return {
+            imageWidth: this.image.width,
+            imageHeight: this.image.height,
+            outerWidth: this.overlay.width,
+            outerHeight: this.overlay.height,
+            rotation: this.currentRotation,
+            crop: { x: this.circle.x, y: this.circle.y, width: this.circle.width, height: this.circle.height },
+        };
+    }
+
+    public get hasImage(): boolean {
+        return !!this.image.src && this.image.complete && this.image.naturalWidth > 0;
+    }
+
+    public get isAnimated(): boolean {
+        return this.currentFileType === "gif";
     }
 
     public get cropArea(): Rectangle {

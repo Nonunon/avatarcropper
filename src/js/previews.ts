@@ -47,6 +47,7 @@ export class Previews extends Widget {
 
     private removePreview(preview: Preview) {
         array_remove(this.previews, preview);
+        preview.destroy();
         this.removeChild(preview);
         this.render();
 

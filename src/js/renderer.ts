@@ -5,12 +5,12 @@ import { FractionalProgressBar } from "./fractionalprogressbar";
 import { Canvas } from "./canvas";
 import { ClosableDialog } from "./closabledialog";
 import { Point } from "./point";
-import { Border } from "./borders";
 import { settings } from "./state";
 
 import SuperGif from './supergif.js'
 import GIF from './gif.js'
-import { Rectangle } from "./rectangle";
+import { compose, bannerArea } from "./compose";
+import type { Rect, CropGeometry } from "./compose";
 import { FrameSource, openFrames } from "./frames";
 
 interface CropOption {
@@ -85,7 +85,7 @@ export class Renderer extends ClosableDialog {
             this.renderAnimated();
         }
         else {
-            this.getFrameURLs(this.cropView.image, false, this.display.bind(this));
+            this.getFrameURLs(this.cropView.image, this.display.bind(this));
             this.currentlyRendering = false;
         }
     }
@@ -139,14 +139,17 @@ export class Renderer extends ClosableDialog {
             return;
         }
 
-        let area = settings.state.banneroutlinesEnabled ? this.bannerArea() : this.cropView.cropArea;
+        let geo = this.cropView.geometry;
+        let banner = settings.state.banneroutlinesEnabled;
+        let area = banner ? bannerArea(geo.crop) : geo.crop;
+        let width = Math.round(area.width), height = Math.round(area.height);
 
         let saveGif = new GIF({
             workers: Math.min(Math.max((navigator.hardwareConcurrency || 4) - 1, 2), 8),
             quality: 1,
             dither: false,
-            width: area.width,
-            height: area.height,
+            width: width,
+            height: height,
             debug: false,
             copy: true
         });
@@ -154,11 +157,9 @@ export class Renderer extends ClosableDialog {
         let len = source.length;
         this.progressBar.addFractionPart(1 / 6, len);
 
-        // one set of canvases reused for every frame, handed straight to the encoder //
-        let border = this.borderCanvas(true);
-        let frame = new Canvas({ size: new Point(source.width, source.height), pixelated: true });
-        let rotated = new Canvas({ size: this.cropView.outerSize, pixelated: true });
-        let crop = new Canvas({ size: area.size, pixelated: true });
+        // one pair of canvases reused for every frame, handed straight to the encoder //
+        let frame = new Canvas({ size: new Point(source.width, source.height) });
+        let crop = this.canvas(width, height);
 
         let renderFrame = async (i: number) => {
             if (this.stopIfAsked()) {
@@ -167,10 +168,9 @@ export class Renderer extends ClosableDialog {
             }
 
             await source.draw(i, frame);
-            this.drawRotated(frame, rotated);
-            this.drawCrop(rotated, area, border, crop);
+            this.composeTo(crop, frame.canvas, geo, area, "square", !banner);
 
-            saveGif.addFrame(crop.context, {
+            saveGif.addFrame(crop, {
                 delay: source.delay(i),
                 copy: true
             });
@@ -214,70 +214,44 @@ export class Renderer extends ClosableDialog {
         renderFrame(0);
     }
 
-    private bannerArea(): Rectangle {
-        let c = this.cropView.circle;
-        return new Rectangle(
-            new Point(c.left - (c.width / 5 + c.width / 13.33), c.cy - c.width * 1.5),
-            new Point(c.width * 3.75, c.width * 1.5)
-        );
+    private canvas(width: number, height: number): CanvasRenderingContext2D {
+        let c = document.createElement("canvas");
+        c.width = width;
+        c.height = height;
+        return c.getContext("2d", { willReadFrequently: true });
     }
 
-    private borderCanvas(pixelated: boolean): Canvas {
-        let border = new Canvas({
-            size: this.cropView.cropArea.size,
-            pixelated: pixelated
+    private composeTo(ctx: CanvasRenderingContext2D, source: CanvasImageSource, geo: CropGeometry, area: Rect, shape: "circle" | "square", border: boolean): void {
+        compose(ctx, source, geo, ctx.canvas.width, ctx.canvas.height, {
+            area,
+            shape,
+            border,
+            smooth: this.cropView.antialias,
         });
-        Border.apply(border);
-        return border;
     }
 
-    // the whole frame, rotated the way the crop view shows it //
-    private drawRotated(frame: Canvas | HTMLImageElement | HTMLCanvasElement, target: Canvas): Canvas {
-        target.clear();
-        target.drawRotatedImage(
-            frame,
-            this.cropView.rotation / 180 * Math.PI,
-            this.cropView.outerSize.dividedBy(2).minus(this.cropView.innerSize.dividedBy(2))
-        );
-        return target;
-    }
-
-    private drawCrop(source: Canvas, area: Rectangle, border: Canvas, target: Canvas): Canvas {
-        target.clear();
-        target.drawCroppedImage(source, new Point(0), area);
-        target.drawImage(border, new Point(0));
-        return target;
-    }
-
-    private getFrameURLs(frame: Canvas | HTMLImageElement | HTMLCanvasElement, pixelated: boolean, callback: (options: CropOption[]) => void): void {
-        let wantBanner = settings.state.banneroutlinesEnabled;
-        let ret: CropOption[] = [];
-        let expected = wantBanner ? 3 : 2;
-        let counter = 0;
-        let check = (blob: Blob, label: string, index: number) => {
-            ret[index] = { url: URL.createObjectURL(blob), label };
-            if (++counter === expected) {
-                callback(ret);
-            }
-        };
-
-        let border = this.borderCanvas(pixelated);
-        let rotated = this.drawRotated(frame, new Canvas({ size: this.cropView.outerSize, pixelated: pixelated }));
-        let cropArea = this.cropView.cropArea;
-
-        let square = this.drawCrop(rotated, cropArea, border, new Canvas({ size: cropArea.size, pixelated: pixelated }));
-        square.createBlob(blob => check(blob, "Square", 0));
-
-        let circle = this.drawCrop(rotated, cropArea, border, new Canvas({ size: cropArea.size, pixelated: pixelated }));
-        circle.blendMode = "destination-in";
-        circle.fillCircleInSquare(new Point(0), circle.width, "white");
-        circle.createBlob(blob => check(blob, "Circle", 1));
-
-        if (wantBanner) {
-            let area = this.bannerArea();
-            let banner = this.drawCrop(rotated, area, border, new Canvas({ size: area.size, pixelated: pixelated }));
-            banner.createBlob(blob => check(blob, "Discord Banner", 2));
+    private getFrameURLs(frame: CanvasImageSource, callback: (options: CropOption[]) => void): void {
+        let geo = this.cropView.geometry;
+        let outputs: { label: string, area: Rect, shape: "circle" | "square", border: boolean }[] = [
+            { label: "Square", area: geo.crop, shape: "square", border: true },
+            { label: "Circle", area: geo.crop, shape: "circle", border: true },
+        ];
+        if (settings.state.banneroutlinesEnabled) {
+            outputs.push({ label: "Discord Banner", area: bannerArea(geo.crop), shape: "square", border: false });
         }
+
+        let ret: CropOption[] = [];
+        let counter = 0;
+        outputs.forEach((out, index) => {
+            let ctx = this.canvas(Math.round(out.area.width), Math.round(out.area.height));
+            this.composeTo(ctx, frame, geo, out.area, out.shape, out.border);
+            ctx.canvas.toBlob(blob => {
+                ret[index] = { url: URL.createObjectURL(blob), label: out.label };
+                if (++counter === outputs.length) {
+                    callback(ret);
+                }
+            });
+        });
     }
 
     private display(cropOptions: CropOption[]): void {

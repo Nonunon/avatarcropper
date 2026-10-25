@@ -1,173 +1,125 @@
 import { Widget } from "./widget";
-import { createElement, showElement, hideElement, makePixelated } from "./util";
-import { Canvas } from "./canvas";
+import { createElement, showElement, hideElement } from "./util";
 import { CropView } from "./cropview";
 import { Point } from "./point";
-import { Rectangle } from "./rectangle";
-import { Border } from "./borders";
+import { compose } from "./compose";
 import { settings, borderKeys } from "./state";
-import { Drawer } from "./drawer";
 
-export class Preview extends Drawer {
-    private mask: Canvas;
-    private border: Canvas;
-    private image: HTMLImageElement;
-    private onlineIndicator: Canvas;
+// one shared animation loop: animated sources redraw every frame, static ones only on change //
+const animating = new Set<Preview>();
+let ticking = false;
+
+function tick(): void {
+    if (!animating.size) {
+        ticking = false;
+        return;
+    }
+    animating.forEach(preview => preview.draw());
+    requestAnimationFrame(tick);
+}
+
+function startTicking(): void {
+    if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(tick);
+    }
+}
+
+// a live, true-size look at the crop, drawn by the same compositor the export uses //
+export class Preview extends Widget {
+    private canvas: HTMLCanvasElement;
+    private context: CanvasRenderingContext2D;
     private bottomBar: HTMLElement;
-    private sizeDisplay: HTMLElement;
-    private removeButton: HTMLElement;
     private _size: Point;
     private cropView: CropView;
-    private lastMode: "square" | "circle" | "banner" | "none" = "none";
-    private antialiased: boolean;
+    private queued: boolean = false;
 
     constructor(size: Point, cropView: CropView) {
         super(createElement("div", "preview"));
 
         this.createEvent("requestremove");
 
-        settings.subscribe(borderKeys, () => this.applyGradient());
-
-        this.cropView = cropView;
-        this.cropView.on("update", (source: string) => {
-            this.update("preview: " + source);
-        });
-        this.cropView.on("imagechange", (src: string) => {
-            this.image.src = src;
-        });
-        this.cropView.on("antialiaschange", (aa: boolean) => {
-            this.antialias = aa;
-        });
-        /*this.cropView.on("actionstart", () => {
-            this.image.style.willChange = "left, top, transform";
-        });
-        this.cropView.on("actionend", () => {
-            this.image.style.willChange = "";
-        });*/
-
         this._size = size;
+        this.cropView = cropView;
 
         this.container.style.width = size.x + "px";
-        this.container.style.height = (size.y + 2) + "px";
-        this.container.style.zIndex = (-size).toString();
+        this.container.style.height = size.y + "px";
 
-        this.mask = new Canvas({
-            size: size.plus(new Point(0, 2))
-        });
-        this.mask.canvas.className = "mask";
-        this.mask.canvas.style.zIndex = "2";
-        this.mask.canvas.style.position = "absolute";
+        // drawn at device resolution so it stays crisp on scaled displays //
+        let dpr = window.devicePixelRatio || 1;
+        this.canvas = createElement("canvas", "previewCanvas") as HTMLCanvasElement;
+        this.canvas.width = Math.round(size.x * dpr);
+        this.canvas.height = Math.round(size.y * dpr);
+        this.canvas.style.width = size.x + "px";
+        this.canvas.style.height = size.y + "px";
+        this.context = this.canvas.getContext("2d");
 
-        this.border = new Canvas({
-            size: size
-        });
-        this.border.canvas.className = "border";
-        this.mask.canvas.style.zIndex = "1";
-        this.border.canvas.style.position = "absolute";
-
-        this.image = <HTMLImageElement>createElement("img", "image");
-        this.image.style.position = "absolute";
-        this.image.style.transformOrigin = "top left";
-        if (cropView.src) {
-            this.image.src = cropView.src;
-        }
-        this.image.style.position = "absolute";
+        this.appendChild(this.canvas);
 
         if (size.equals(new Point(30))) {
-            this.onlineIndicator = new Canvas({ size: new Point(14) });
-            this.onlineIndicator.fillCircleInSquare(new Point(0, 0), 14, "#2F3136");
-            this.onlineIndicator.fillCircleInSquare(new Point(2, 2), 10, "rgb(67,181,129)");
-            this.onlineIndicator.canvas.className = "onlineIndicator";
+            this.appendChild(createElement("div", "onlineIndicator"));
         }
 
         this.bottomBar = createElement("div", "bottomBar");
-
-        this.sizeDisplay = createElement("div", "size");
-        this.sizeDisplay.innerText = size.x + "x" + size.y;
-        this.container.title = this.sizeDisplay.innerText;
-
-        this.removeButton = createElement("button", "remove");
-        this.removeButton.innerText = "✖";
-        this.removeButton.addEventListener("click", () => {
-            this.emitEvent("requestremove");
-        });
-
-        this.bottomBar.appendChild(this.sizeDisplay);
-        this.bottomBar.appendChild(this.removeButton);
-
-        this.appendChild(this.image, this.mask.canvas, this.border.canvas, (this.onlineIndicator && this.onlineIndicator.canvas) || null, this.bottomBar);
-
-        this.container.addEventListener("mouseenter", () => {
-            showElement(this.bottomBar);
-        });
-
-        this.container.addEventListener("mouseleave", () => {
-            hideElement(this.bottomBar);
-        });
-
+        let sizeDisplay = createElement("div", "size");
+        sizeDisplay.innerText = size.x + "x" + size.y;
+        this.container.title = sizeDisplay.innerText;
+        let removeButton = createElement("button", "remove");
+        removeButton.innerText = "✖";
+        removeButton.addEventListener("click", () => this.emitEvent("requestremove"));
+        this.bottomBar.appendChild(sizeDisplay);
+        this.bottomBar.appendChild(removeButton);
+        this.appendChild(this.bottomBar);
         hideElement(this.bottomBar);
+        this.container.addEventListener("mouseenter", () => showElement(this.bottomBar));
+        this.container.addEventListener("mouseleave", () => hideElement(this.bottomBar));
 
-        this.antialias = true;
+        cropView.on("update", () => this.queue());
+        cropView.on("imagechange", () => this.queue());
+        cropView.on("antialiaschange", () => this.queue());
+        settings.subscribe([...borderKeys, "previewMode"], () => this.queue());
+
+        this.queue();
     }
 
     public get size(): Point {
         return this._size;
     }
-    
-    public applyGradient(): void {
-        Border.apply(this.border);
+
+    public destroy(): void {
+        animating.delete(this);
     }
 
-    protected draw() {
-        if (settings.state.previewMode !== this.lastMode) {
-            this.lastMode = settings.state.previewMode;
-
-            this.applyGradient();
-
-            if (this.lastMode === "square") {
-                this.mask.clear();
-                this.mask.fillRect(new Rectangle(new Point(0, this.size.y), new Point(this.size.x, 2)), "#2F3136");
-                if (this.onlineIndicator) {
-                    hideElement(this.onlineIndicator.canvas);
-                }
-            }
-            else {
-                this.mask.fill("#2F3136");
-                this.mask.blendMode = "destination-out";
-                this.mask.fillCircleInRect(new Rectangle(new Point(0), this.size), "white");
-                this.mask.blendMode = "source-over";
-                if (this.onlineIndicator) {
-                    showElement(this.onlineIndicator.canvas);
-                }
-            }
+    private queue(): void {
+        // animated sources are already redrawn every frame by the shared loop //
+        if (this.cropView.isAnimated && this.container.isConnected) {
+            animating.add(this);
+            startTicking();
+            return;
         }
+        animating.delete(this);
 
-        let scale = this.size.dividedBy(this.cropView.cropArea.size);
-        this.image.style.transform = "scale(" + scale.x + "," + scale.y + ") rotate(" + this.cropView.rotation + "deg)";
-
-
-        let p = new Point(0);
-        p.subtract(this.cropView.cropArea.position.times(scale));
-
-        let dp = new Point(
-            parseFloat(this.cropView.image.style.left || "0px"),
-            parseFloat(this.cropView.image.style.top || "0px")
-        );
-
-        dp.multiply(1 / this.cropView.zoomFactor);
-
-        p.add(dp.times(scale));
-
-        this.image.style.left = p.x + "px";
-        this.image.style.top = p.y + "px";
+        if (!this.queued) {
+            this.queued = true;
+            requestAnimationFrame(() => {
+                this.queued = false;
+                this.draw();
+            });
+        }
     }
 
-    public set antialias(antialias: boolean) {
-        makePixelated(this.image, !antialias);
-        this.antialiased = antialias;
-    }
-
-    public get antialias(): boolean {
-        return this.antialiased;
+    public draw(): void {
+        if (!this.container.isConnected) {
+            animating.delete(this);
+            return;
+        }
+        if (!this.cropView.hasImage) {
+            this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            return;
+        }
+        compose(this.context, this.cropView.image, this.cropView.geometry, this.canvas.width, this.canvas.height, {
+            shape: settings.state.previewMode === "square" ? "square" : "circle",
+            smooth: this.cropView.antialias,
+        });
     }
 }

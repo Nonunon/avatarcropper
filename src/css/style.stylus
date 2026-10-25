@@ -619,15 +619,24 @@ body, .bigOverlay
     z-index: 1
 
     .preview
-        bottom -2px
+        bottom 0
         overflow hidden
         border-radius: 5px
+        background #2F3136
+
+        .previewCanvas
+            display block
 
         .onlineIndicator
             z-index 2
             position absolute
             left 18px
             top 20px
+            width 10px
+            height 10px
+            border 2px solid #2F3136
+            border-radius 50%
+            background rgb(67, 181, 129)
 
         .bottomBar
             position absolute
