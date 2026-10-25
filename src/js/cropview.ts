@@ -8,6 +8,7 @@ import { Rectangle, RectAnchor } from "./rectangle";
 import { KeyManager, Keys } from "./keymanager";
 import { Drawer } from "./drawer";
 import { showAlert } from "./nativedialogs";
+import { isAnimated, canDecodeFrames } from "./frames";
 
 type MouseAction = "move" | "resize" | "new" | "none";
 
@@ -90,6 +91,8 @@ export class CropView extends Drawer {
     private _zoomFactor: number = 1;
     private currentRotation = 0;
     public currentFileType: string;
+    public sourceFile: Blob;
+    public sourceType: string;
     public circle: Circle;
     private _filename: string;
     private currentAction: MouseAction = "none";
@@ -542,15 +545,27 @@ export class CropView extends Drawer {
             return false;
         }
 
-        this.currentFileType = file.type === "image/gif" || (!file.type && ext === "gif") ? "gif" : "png";
-        let base = file.name.lastIndexOf('.') > 0 ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
-        this._filename = base + "_cropped." + this.currentFileType;
+        let types: { [ext: string]: string } = { gif: "image/gif", webp: "image/webp", png: "image/png", apng: "image/apng", avif: "image/avif" };
+        this.sourceFile = file;
+        this.sourceType = file.type || types[ext] || "";
 
         this.loadingImage = true;
-        Canvas.fileToImage(file, this.setImageFromFileHelper.bind(this), false, () => {
-            // without this a file the browser can't decode left loadingImage stuck and blocked every later open //
-            this.loadingImage = false;
-            showAlert("Couldn't open " + file.name + ", your browser can't read that image format.");
+
+        // anything animated (gif, webp, apng, avif) is cropped frame by frame and saved as a gif //
+        let animatedCheck = this.sourceType === "image/gif" && !canDecodeFrames()
+            ? Promise.resolve(true)
+            : isAnimated(file, this.sourceType);
+
+        animatedCheck.then(animated => {
+            this.currentFileType = animated ? "gif" : "png";
+            let base = file.name.lastIndexOf('.') > 0 ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
+            this._filename = base + "_cropped." + this.currentFileType;
+
+            Canvas.fileToImage(file, this.setImageFromFileHelper.bind(this), false, () => {
+                // without this a file the browser can't decode left loadingImage stuck and blocked every later open //
+                this.loadingImage = false;
+                showAlert("Couldn't open " + file.name + ", your browser can't read that image format.");
+            });
         });
         return true;
     }

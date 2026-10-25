@@ -91,6 +91,12 @@ export class AvatarCropper extends Widget {
         console.log(AvatarCropper.settings.borderSize)
         this.constructMenu()
         this.cropView = new CropView(AvatarCropper.settings)
+        // flipping redraws through a canvas, which would flatten an animation //
+        this.cropView.on('imagechange', () => {
+            let animated = this.cropView.currentFileType === 'gif'
+            this.flipHButton.style.display = animated ? 'none' : ''
+            this.flipVButton.style.display = animated ? 'none' : ''
+        })
         this.previews = new Previews(this.cropView)
 
         this.appendChild(this.cropView, this.previews)
@@ -671,14 +677,6 @@ export class AvatarCropper extends Widget {
             hideElement(this.textOverlay)
             this.textOverlay.removeAttribute('for')
             this.textOverlay.style.cursor = ''
-        }
-
-        if (this.cropView.currentFileType === 'gif') {
-            hideElement(this.flipHButton)
-            hideElement(this.flipVButton)
-        } else {
-            showElement(this.flipHButton)
-            showElement(this.flipVButton)
         }
 
         if (

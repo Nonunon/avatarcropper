@@ -11,6 +11,7 @@ import { Settings } from "./avatarcropper";
 import SuperGif from './supergif.js'
 import GIF from './gif.js'
 import { Rectangle } from "./rectangle";
+import { FrameSource, openFrames } from "./frames";
 
 interface CropOption {
     label: string;
@@ -83,7 +84,7 @@ export class Renderer extends ClosableDialog {
         this.show();
 
         if (this.cropView.currentFileType === "gif") {
-            this.renderGif();
+            this.renderAnimated();
         }
         else {
             this.getFrameURLs(this.cropView.image, false, this.display.bind(this));
@@ -91,102 +92,128 @@ export class Renderer extends ClosableDialog {
         }
     }
 
-    private renderGif(): void {
-        let area = this.settings.banneroutlinesEnabled ? this.bannerArea() : this.cropView.cropArea;
+    private stopIfAsked(): boolean {
+        if (this.shouldStopRendering) {
+            this.currentlyRendering = false;
+            this.tryClose();
+            return true;
+        }
+        return false;
+    }
+
+    // frames come from the browser's decoder (gif, webp, apng, avif), or supergif for gifs where it's missing //
+    private async renderAnimated(): Promise<void> {
+        let source = await openFrames(this.cropView.sourceFile, this.cropView.sourceType);
+        if (source) {
+            this.encodeGif(source);
+            return;
+        }
+
         let gif = new SuperGif({
             gif: this.cropView.image.cloneNode()
         });
-
         this.loadGif = gif;
 
-        let onload = () => {
+        gif.load(() => {
             this.loadGif = null;
-
-            if (this.shouldStopRendering) {
-                this.currentlyRendering = false;
-                this.tryClose();
-            }
-
-            let saveGif = new GIF({
-                workers: Math.min(Math.max((navigator.hardwareConcurrency || 4) - 1, 2), 8),
-                quality: 1,
-                dither: false,
-                width: area.width,
-                height: area.height,
-                debug: false,
-                copy: true
+            this.encodeGif({
+                length: gif.get_length(),
+                width: gif.get_canvas().width,
+                height: gif.get_canvas().height,
+                delay: (i: number) => gif.get_frames()[i].delay * 10 || 100,
+                draw: async (i: number, target: Canvas) => {
+                    gif.move_to(i);
+                    target.clear();
+                    target.drawImage(gif.get_canvas(), new Point(0));
+                },
+                close: () => { },
             });
-
-            let len = gif.get_length();
-            this.progressBar.addFractionPart(1 / 6, len);
-
-            // one set of canvases reused for every frame, handed straight to the encoder
-            // (this used to encode each frame to a PNG and decode it again) //
-            let border = this.borderCanvas(true);
-            let rotated = new Canvas({ size: this.cropView.outerSize, pixelated: true });
-            let crop = new Canvas({ size: area.size, pixelated: true });
-
-            let renderFrame = (i: number) => {
-                if (this.shouldStopRendering) {
-                    this.currentlyRendering = false;
-                    this.tryClose();
-                    return;
-                }
-
-                gif.move_to(i);
-                this.drawRotated(gif.get_canvas(), rotated);
-                this.drawCrop(rotated, area, border, crop);
-
-                saveGif.addFrame(crop.context, {
-                    delay: gif.get_frames()[i].delay * 10 || 10,
-                    copy: true
-                });
-
-                this.progressBar.step();
-
-                i++;
-                if (i === len) {
-                    saveGif.render();
-                }
-                else {
-                    // yield so the progress bar can paint //
-                    setTimeout(() => renderFrame(i), 0);
-                }
-            };
-
-            saveGif.on("finished", (blob: Blob) => {
-                let url = URL.createObjectURL(blob);
-                this.display([
-                    {
-                        label: "GIF",
-                        url: url
-                    }
-                ]);
-
-                this.currentlyRendering = false;
-            });
-
-            saveGif.on("abort", () => {
-                this.currentlyRendering = false;
-                this.tryClose();
-            });
-
-            saveGif.on("progress", (progress: number) => {
-                this.progressBar.progress = 1 / 6 + progress * 5 / 6;
-
-                if (this.shouldStopRendering) {
-                    saveGif.abort();
-                }
-            });
-
-            renderFrame(0);
-        };
-
-        gif.load(onload, undefined, () => {
+        }, undefined, () => {
             this.loadGif = null;
             this.currentlyRendering = false;
             this.tryClose();
         });
+    }
+
+    private encodeGif(source: FrameSource): void {
+        if (this.stopIfAsked()) {
+            source.close();
+            return;
+        }
+
+        let area = this.settings.banneroutlinesEnabled ? this.bannerArea() : this.cropView.cropArea;
+
+        let saveGif = new GIF({
+            workers: Math.min(Math.max((navigator.hardwareConcurrency || 4) - 1, 2), 8),
+            quality: 1,
+            dither: false,
+            width: area.width,
+            height: area.height,
+            debug: false,
+            copy: true
+        });
+
+        let len = source.length;
+        this.progressBar.addFractionPart(1 / 6, len);
+
+        // one set of canvases reused for every frame, handed straight to the encoder //
+        let border = this.borderCanvas(true);
+        let frame = new Canvas({ size: new Point(source.width, source.height), pixelated: true });
+        let rotated = new Canvas({ size: this.cropView.outerSize, pixelated: true });
+        let crop = new Canvas({ size: area.size, pixelated: true });
+
+        let renderFrame = async (i: number) => {
+            if (this.stopIfAsked()) {
+                source.close();
+                return;
+            }
+
+            await source.draw(i, frame);
+            this.drawRotated(frame, rotated);
+            this.drawCrop(rotated, area, border, crop);
+
+            saveGif.addFrame(crop.context, {
+                delay: source.delay(i),
+                copy: true
+            });
+
+            this.progressBar.step();
+
+            if (i + 1 === len) {
+                source.close();
+                saveGif.render();
+            }
+            else {
+                // yield so the progress bar can paint //
+                setTimeout(() => renderFrame(i + 1), 0);
+            }
+        };
+
+        saveGif.on("finished", (blob: Blob) => {
+            this.display([
+                {
+                    label: "GIF",
+                    url: URL.createObjectURL(blob)
+                }
+            ]);
+
+            this.currentlyRendering = false;
+        });
+
+        saveGif.on("abort", () => {
+            this.currentlyRendering = false;
+            this.tryClose();
+        });
+
+        saveGif.on("progress", (progress: number) => {
+            this.progressBar.progress = 1 / 6 + progress * 5 / 6;
+
+            if (this.shouldStopRendering) {
+                saveGif.abort();
+            }
+        });
+
+        renderFrame(0);
     }
 
     private bannerArea(): Rectangle {
