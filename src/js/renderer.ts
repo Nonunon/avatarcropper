@@ -6,7 +6,7 @@ import { Canvas } from "./canvas";
 import { ClosableDialog } from "./closabledialog";
 import { Point } from "./point";
 import { Border } from "./borders";
-import { Settings } from "./avatarcropper";
+import { settings } from "./state";
 
 import SuperGif from './supergif.js'
 import GIF from './gif.js'
@@ -33,7 +33,6 @@ export class Renderer extends ClosableDialog {
     private saveButton: HTMLElement;
     private loadGif: any;
     private readonly initialized: boolean = false;
-    public readonly settings: Settings;
 
     constructor(cropView: CropView) {
         super();
@@ -41,7 +40,6 @@ export class Renderer extends ClosableDialog {
         this.dialog.classList.add("dialog-render");
 
         this.createEvent("close");
-        this.settings = cropView.settings
         this.cropView = cropView;
 
         this.headerElement = createElement("h1", "header");
@@ -141,7 +139,7 @@ export class Renderer extends ClosableDialog {
             return;
         }
 
-        let area = this.settings.banneroutlinesEnabled ? this.bannerArea() : this.cropView.cropArea;
+        let area = settings.state.banneroutlinesEnabled ? this.bannerArea() : this.cropView.cropArea;
 
         let saveGif = new GIF({
             workers: Math.min(Math.max((navigator.hardwareConcurrency || 4) - 1, 2), 8),
@@ -252,7 +250,7 @@ export class Renderer extends ClosableDialog {
     }
 
     private getFrameURLs(frame: Canvas | HTMLImageElement | HTMLCanvasElement, pixelated: boolean, callback: (options: CropOption[]) => void): void {
-        let wantBanner = this.settings.banneroutlinesEnabled;
+        let wantBanner = settings.state.banneroutlinesEnabled;
         let ret: CropOption[] = [];
         let expected = wantBanner ? 3 : 2;
         let counter = 0;

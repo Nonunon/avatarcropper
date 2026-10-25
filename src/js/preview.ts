@@ -5,9 +5,8 @@ import { CropView } from "./cropview";
 import { Point } from "./point";
 import { Rectangle } from "./rectangle";
 import { Border } from "./borders";
-import { GlobalEvents } from "./eventclass";
+import { settings, borderKeys } from "./state";
 import { Drawer } from "./drawer";
-import { AvatarCropper } from "./avatarcropper";
 
 export class Preview extends Drawer {
     private mask: Canvas;
@@ -27,7 +26,7 @@ export class Preview extends Drawer {
 
         this.createEvent("requestremove");
 
-        GlobalEvents.on("borderchange", () => this.applyGradient());
+        settings.subscribe(borderKeys, () => this.applyGradient());
 
         this.cropView = cropView;
         this.cropView.on("update", (source: string) => {
@@ -120,8 +119,8 @@ export class Preview extends Drawer {
     }
 
     protected draw() {
-        if (AvatarCropper.settings.previewMode !== this.lastMode) {
-            this.lastMode = this.cropView.settings.previewMode;
+        if (settings.state.previewMode !== this.lastMode) {
+            this.lastMode = settings.state.previewMode;
 
             this.applyGradient();
 

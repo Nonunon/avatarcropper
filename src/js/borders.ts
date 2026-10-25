@@ -1,107 +1,27 @@
-import { GlobalEvents } from "./eventclass";
+import { settings } from "./state";
+import { GradientInfo, GradientStop, defaultBorderPresets } from "./presets";
+
+export type { GradientInfo, GradientStop };
 import { Point } from "./point";
 import { Canvas } from "./canvas";
 
-export type GradientStop = {
-    pos: number,
-    color: string
-};
-
-export type GradientInfo = {
-    name: string,
-    gradient: GradientStop[],
-    angle: number
-};
-
 export class Border {
     public static get defaults(): GradientInfo[] {
-        return [
-            {
-                name: "LGBT Pride",
-                angle: 0,
-                gradient: [
-                    { pos: 0/5, color: "#FF0018" },
-                    { pos: 1/5, color: "#FFA52C" },
-                    { pos: 2/5, color: "#FFFF41" },
-                    { pos: 3/5, color: "#008018" },
-                    { pos: 4/5, color: "#0000F9" },
-                    { pos: 5/5, color: "#86007D" },
-                ]
-            },
-            {
-                name: "Trans Pride",
-                angle: 0,
-                gradient: [
-                    { pos: 0, color: "#55CDFC" },
-                    { pos: 0.25, color: "#F7A8B8" },
-                    { pos: 0.5, color: "#FFFFFF" },
-                    { pos: 0.75, color: "#F7A8B8" },
-                    { pos: 1, color: "#55CDFC" }
-                ]
-            },
-            {
-                name: "Nonbinary Pride",
-                angle: 0,
-                gradient: [
-                    { pos: 0/3, color: "#FFF430" },
-                    { pos: 1/3, color: "#FFFFFF" },
-                    { pos: 2/3, color: "#9C59D1" },
-                    { pos: 3/3, color: "#000000" },
-                ]
-            },
-        ];
+        return JSON.parse(JSON.stringify(defaultBorderPresets));
     }
 
-    private static _type: "none" | "solid" | "gradient" = "none";
-    private static _size: number = 0.05;
-    private static _color: string = "#FFAA00";
-    private static _gradient: GradientInfo = Border.defaults[0];
-    private static _shape: "circle" | "square" = "circle";
+    // the border lives in the settings store; these keep the old Border.x = y call sites working //
+    public static get type(): "none" | "solid" | "gradient" { return settings.state.borderType; }
+    public static set type(type: "none" | "solid" | "gradient") { settings.set({ borderType: type }); }
 
-    public static get type() : "none" | "solid" | "gradient" {
-        return this._type;
-    }
+    public static get size(): number { return settings.state.borderSize; }
+    public static set size(size: number) { settings.set({ borderSize: size }); }
 
-    public static set type(type: "none" | "solid" | "gradient") {
-        this._type = type;
-        GlobalEvents.emitEvent("borderchange");
-    }
+    public static get color(): string { return settings.state.borderColor; }
+    public static set color(color: string) { settings.set({ borderColor: color }); }
 
-    public static get size() : number {
-        return this._size;
-    }
-
-    public static set size(size: number) {
-        this._size = size;
-        GlobalEvents.emitEvent("borderchange");
-    }
-
-    public static set color(color: string) {
-        this._color = color;
-        GlobalEvents.emitEvent("borderchange");
-    }
-
-    public static get color(): string {
-        return this._color;
-    }
-
-    public static set gradient(gradient: GradientInfo) {
-        this._gradient = gradient;
-        GlobalEvents.emitEvent("borderchange");
-    }
-
-    public static get gradient(): GradientInfo {
-        return this._gradient;
-    }
-
-    public static set shape(shape: "circle" | "square") {
-        this._shape = shape;
-        GlobalEvents.emitEvent("borderchange");
-    }
-
-    public static get shape(): "circle" | "square" {
-        return this._shape;
-    }
+    public static get gradient(): GradientInfo { return settings.state.borderGradient; }
+    public static set gradient(gradient: GradientInfo) { settings.set({ borderGradient: gradient }); }
 
     public static applyGradientToCanvas(gradientInfo : GradientInfo, canvas : Canvas) {
         let a1 = (-270 - gradientInfo.angle) * Math.PI / 180;
@@ -140,11 +60,7 @@ export class Border {
         } else if (this.type === "gradient") {
             this.applyGradientToCanvas(this.gradient, canvas);
             canvas.blendMode = "destination-out";
-            if (this.shape === "circle") {
-                canvas.fillCircleInRect(canvas.size.toRectangle().expand(1 - this.size), "white");
-            } else {
-                canvas.fillRect(canvas.size.toRectangle().expand(1 - this.size), "white");
-            }
+            canvas.fillCircleInRect(canvas.size.toRectangle().expand(1 - this.size), "white");
             canvas.blendMode = "source-over";
         }
     }

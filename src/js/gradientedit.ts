@@ -7,7 +7,7 @@ import { createElement, array_last, array_remove } from "./util";
 import { Dropdown } from "./dropdown";
 import { ColorPicker } from "./colorpicker";
 import { LabelSlider } from "./labeledslider";
-import { AvatarCropper } from "./avatarcropper";
+import { settings } from "./state";
 import { showAlert, showConfirm, showPrompt } from "./nativedialogs";
 
 // what fucked up design pattern is this //
@@ -74,7 +74,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
 
         let presetSelect = new Dropdown("presetSelect", "Select one...");
         let refreshPresets = (index: number = -1) => {
-            presetSelect.setOptions(AvatarCropper.settings.borderPresets.map(preset => ({ label: preset.name, value: JSON.stringify(preset) })));
+            presetSelect.setOptions(settings.state.borderPresets.map(preset => ({ label: preset.name, value: JSON.stringify(preset) })));
             presetSelect.selectedIndex = index;
         };
         refreshPresets();
@@ -96,8 +96,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         overwrite.addEventListener("click", () => {
             if (presetSelect.value) {
                 let index = presetSelect.selectedIndex;
-                AvatarCropper.settings.borderPresets[index] = this.gradientInfo;
-                AvatarCropper.saveSettings();
+                settings.set({ borderPresets: settings.state.borderPresets.map((p, i) => i === index ? this.gradientInfo : p) });
                 refreshPresets(index);
             }  else {
                 showAlert("Please select a valid preset or save as new preset.");
@@ -114,13 +113,12 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
                 } else if (!name) {
                     showAlert("That name is invalid.");
                 } else {
-                    if (AvatarCropper.settings.borderPresets.some(preset => preset.name.toLowerCase() === name.toLowerCase())) {
+                    if (settings.state.borderPresets.some(preset => preset.name.toLowerCase() === name.toLowerCase())) {
                         showAlert("That name is already taken.");
                     } else {
                         this.gradientInfo.name = name;
-                        AvatarCropper.settings.borderPresets.push(this.gradientInfo);
-                        AvatarCropper.saveSettings();
-                        refreshPresets(AvatarCropper.settings.borderPresets.length - 1);
+                        settings.set({ borderPresets: [...settings.state.borderPresets, this.gradientInfo] });
+                        refreshPresets(settings.state.borderPresets.length - 1);
                     }
                 }
             });
@@ -133,8 +131,8 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
             if (presetSelect.value) {
                 showConfirm("Are you sure you want to delete this preset?").then(confirmed => {
                     if (confirmed) {
-                        AvatarCropper.settings.borderPresets.splice(presetSelect.selectedIndex, 1);
-                        AvatarCropper.saveSettings();
+                        let index = presetSelect.selectedIndex;
+                        settings.set({ borderPresets: settings.state.borderPresets.filter((p, i) => i !== index) });
                         refreshPresets();
                     }
                 });

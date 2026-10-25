@@ -1,7 +1,7 @@
 import { Widget } from "./widget";
 import { createElement, makePixelated } from "./util";
 import { Canvas } from "./canvas";
-import { Settings } from "./avatarcropper";
+import { settings } from "./state";
 import { Renderer } from "./renderer";
 import { Point } from "./point";
 import { Rectangle, RectAnchor } from "./rectangle";
@@ -99,12 +99,11 @@ export class CropView extends Drawer {
     private mouseOrigin: Point;
     private resizeAnchor: Point;
     private resizeOffset: Point;
-    public readonly settings: Settings;
     private readonly renderer: Renderer;
     private loadingImage: boolean = false;
     private antialiased: boolean;
 
-    constructor(settingsObject: Settings) {
+    constructor() {
         super(createElement("div", "cropView"));
 
         this.createEvent("update");
@@ -116,7 +115,6 @@ export class CropView extends Drawer {
         //this.on("update", this.renderOverlay.bind(this));
         //this.once("update", () => console.log("sup"));
 
-        this.settings = settingsObject;
         this.circle = new Circle(this);
         this.renderer = new Renderer(this);
 
@@ -162,7 +160,9 @@ export class CropView extends Drawer {
         window.addEventListener("keydown", e => this.handleKeypress(e.keyCode));
 
         //this.overlay.mouse.addEventListener("leave", this.overlay.mouse.events.up[0]);
-        this.antialias = this.settings.antialias;
+        this.antialias = settings.state.antialias;
+
+        settings.subscribe(['maskOpacity', 'previewMode', 'outlinesEnabled', 'banneroutlinesEnabled', 'guidesEnabled'], () => this.update("settings"));
     }
 
     private handleKeypress(key: number) {
@@ -199,21 +199,21 @@ export class CropView extends Drawer {
     protected draw(): void {
         //console.log("rendering overlay");
         // draw mask //
-        if (this.settings.maskOpacity !== 1) {
+        if (settings.state.maskOpacity !== 1) {
             this.overlay.clear();
         }
 
-        if (this.settings.maskOpacity !== 0) {
-            this.overlay.fill("rgba(0,0,0," + this.settings.maskOpacity + ")");
+        if (settings.state.maskOpacity !== 0) {
+            this.overlay.fill("rgba(0,0,0," + settings.state.maskOpacity + ")");
 
             this.overlay.blendMode = "destination-out";
-            if (this.settings.previewMode === "circle") {
+            if (settings.state.previewMode === "circle") {
                 this.overlay.fillCircleInRect(this.circle, "white");
             }
             else {
                 this.overlay.fillRect(this.circle, "white");
             }
-            if (this.settings.banneroutlinesEnabled) {
+            if (settings.state.banneroutlinesEnabled) {
                 this.overlay.fillRect(
                     new Rectangle(new Point(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy - (this.circle.width * 1.5)), new Point(this.circle.width * 3.75, this.circle.width * 1.5)),
                     "white"
@@ -224,12 +224,12 @@ export class CropView extends Drawer {
         this.overlay.blendMode = "source-over";
         let lineWidth = ~~(1 / this.zoomFactor) + 1;
 
-        if (this.settings.outlinesEnabled) {
+        if (settings.state.outlinesEnabled) {
             let sharp = lineWidth % 2 === 1;
 
             this.overlay.lineDash = [Math.min(this.overlay.width, this.overlay.height) / 100];
 
-            if (this.settings.previewMode === "circle") {
+            if (settings.state.previewMode === "circle") {
                 this.overlay.drawCircleInRect(this.circle, "white", lineWidth);
             }
 
@@ -244,12 +244,12 @@ export class CropView extends Drawer {
             );
         }
 
-        if (this.settings.banneroutlinesEnabled) {
+        if (settings.state.banneroutlinesEnabled) {
             let sharp = lineWidth % 2 === 1;
 
             this.overlay.lineDash = [Math.min(this.overlay.width, this.overlay.height) / 100];
 
-/*             if (this.settings.previewMode === "circle") {
+/*             if (settings.state.previewMode === "circle") {
                 this.overlay.drawCircleInRect(this.circle, "red", lineWidth);
             } */
 
@@ -282,7 +282,7 @@ export class CropView extends Drawer {
         this.overlay.context.stroke()
         }
 
-        if (this.settings.guidesEnabled) {
+        if (settings.state.guidesEnabled) {
             this.overlay.context.lineDashOffset = this.overlay.context.getLineDash()[0];
             this.overlay.drawLine(this.circle.center, new Point(this.circle.cx, this.circle.bottom), "yellow", lineWidth);
             this.overlay.drawLine(this.circle.center, new Point(this.circle.cx, this.circle.top), "yellow", lineWidth);
@@ -734,7 +734,7 @@ export class CropView extends Drawer {
             this.performResize(x, y);
         }
 
-        this.circle.round(this.settings.resizeLock); // u rite
+        this.circle.round(settings.state.resizeLock); // u rite
         this.update("mouse move");
     }
 
@@ -763,7 +763,7 @@ export class CropView extends Drawer {
     private performResize(x: number, y: number) {
         let anchor = Rectangle.anchorOpposite(this.getCircleAnchor(new Point(x, y)));
 
-        if (!this.settings.resizeLock) {
+        if (!settings.state.resizeLock) {
             this.resizeAnchor = this.circle.getPointFromAnchor(anchor).minus(this.resizeOffset);
             let size = this.circle.size.copy();
 
