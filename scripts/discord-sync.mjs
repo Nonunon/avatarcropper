@@ -15,6 +15,8 @@ import { fileURLToPath } from 'url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'public', 'discord')
+// parcel only copies public/ on a rebuild, so a running dev server gets fresh files straight away too
+const DIST = path.join(ROOT, 'dist', 'discord')
 const CONFIG_PATH = path.join(ROOT, 'discord.config.json')
 const CDN = 'https://cdn.discordapp.com'
 
@@ -51,9 +53,17 @@ function readJson(file, fallback) {
     }
 }
 
+function writeFile(rel, data) {
+    for (let dir of [OUT, DIST]) {
+        if (dir === DIST && !fs.existsSync(path.dirname(DIST))) continue
+        let dest = path.join(dir, rel)
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        fs.writeFileSync(dest, data)
+    }
+}
+
 function writeJson(file, data) {
-    fs.mkdirSync(OUT, { recursive: true })
-    fs.writeFileSync(path.join(OUT, file), JSON.stringify(data, null, 1))
+    writeFile(file, JSON.stringify(data, null, 1))
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -74,8 +84,9 @@ async function download(url, rel) {
         if (!res.ok) {
             throw new Error(`${res.status} for ${url}`)
         }
-        fs.mkdirSync(path.dirname(dest), { recursive: true })
-        fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
+        writeFile(rel, Buffer.from(await res.arrayBuffer()))
+    } else if (fs.existsSync(path.dirname(DIST)) && !fs.existsSync(path.join(DIST, rel))) {
+        writeFile(rel, fs.readFileSync(dest))
     }
     return 'discord/' + rel.split(path.sep).join('/')
 }
@@ -145,7 +156,8 @@ async function buildCatalog(config, doDownload, limit) {
             let s = file.match(/_static_(\d{17,20})\.png$/)
             if (s) sku = s[1]
         }
-        if (!asset) continue
+        // the mirror also caught a few of Discord's internal test items //
+        if (!asset || name.startsWith('[TEST]')) continue
         decorations.push({
             name,
             asset,
