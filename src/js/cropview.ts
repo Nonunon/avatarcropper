@@ -7,6 +7,7 @@ import { Point } from "./point";
 import { Rectangle, RectAnchor } from "./rectangle";
 import { KeyManager, Keys } from "./keymanager";
 import { Drawer } from "./drawer";
+import { showAlert } from "./nativedialogs";
 
 type MouseAction = "move" | "resize" | "new" | "none";
 
@@ -534,15 +535,23 @@ export class CropView extends Drawer {
     }
 
     public setImageFromFile(file: File): boolean {
-        if (!file || file.type.split("/")[0] !== "image" || this.loadingImage) {
+        // some sources hand over files with no mime type, so fall back to the extension //
+        let ext = file ? file.name.split('.').pop().toLowerCase() : "";
+        let looksLikeImage = file && (file.type.startsWith("image/") || (!file.type && /^(png|jpe?g|jfif|gif|webp|avif|bmp|ico|svg|apng)$/.test(ext)));
+        if (!looksLikeImage || this.loadingImage) {
             return false;
         }
 
-        this.currentFileType = file.type.split("/")[1] === "gif" ? "gif" : "png";
-        this._filename = file.name.substring(0, file.name.lastIndexOf('.')) + "_cropped." + this.currentFileType;
+        this.currentFileType = file.type === "image/gif" || (!file.type && ext === "gif") ? "gif" : "png";
+        let base = file.name.lastIndexOf('.') > 0 ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
+        this._filename = base + "_cropped." + this.currentFileType;
 
         this.loadingImage = true;
-        Canvas.fileToImage(file, this.setImageFromFileHelper.bind(this), false);
+        Canvas.fileToImage(file, this.setImageFromFileHelper.bind(this), false, () => {
+            // without this a file the browser can't decode left loadingImage stuck and blocked every later open //
+            this.loadingImage = false;
+            showAlert("Couldn't open " + file.name + ", your browser can't read that image format.");
+        });
         return true;
     }
 

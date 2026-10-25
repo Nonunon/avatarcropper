@@ -386,7 +386,7 @@ export class Canvas
     }
 
     public get blendMode() : string { return this.context.globalCompositeOperation; }
-    public set blendMode(val : string) { this.context.globalCompositeOperation = val; }
+    public set blendMode(val : string) { this.context.globalCompositeOperation = val as GlobalCompositeOperation; }
 
     public get lineDash() : number[] { return this.context.getLineDash(); }
     public set lineDash(dash : number[]) { this.context.setLineDash(dash); }
@@ -677,10 +677,10 @@ export class Canvas
         this.context.restore();
     }
 
-    public static fileToImage(file : File, callback : (image : HTMLImageElement) => any, autoRevoke : boolean = true)
+    public static fileToImage(file : File, callback : (image : HTMLImageElement) => any, autoRevoke : boolean = true, onError? : () => any)
     {
         let img = new Image();
-    
+
         img.onload = () =>
         {
             callback(img);
@@ -689,7 +689,13 @@ export class Canvas
                 window.URL.revokeObjectURL(img.src);
             }
         };
-    
+
+        img.onerror = () =>
+        {
+            window.URL.revokeObjectURL(img.src);
+            onError && onError();
+        };
+
         img.src = window.URL.createObjectURL(file);
     }
 }
