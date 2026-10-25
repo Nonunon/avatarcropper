@@ -3,7 +3,9 @@ import { Canvas } from "./canvas";
 import { Point } from "./point";
 import { GradientInfo, Border, GradientStop } from "./borders";
 import { InputDialog } from "./inputdialog";
-import { createElement, array_last, array_remove, createOptionElement } from "./util";
+import { createElement, array_last, array_remove } from "./util";
+import { Dropdown } from "./dropdown";
+import { ColorPicker } from "./colorpicker";
 import { LabelSlider } from "./labeledslider";
 import { AvatarCropper } from "./avatarcropper";
 import { showAlert, showConfirm, showPrompt } from "./nativedialogs";
@@ -46,7 +48,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
     private gradientSlider: GradientSlider;
     private gradientInfo: GradientInfo;
     private angleSlider: LabelSlider;
-    private colorSelect: HTMLInputElement;
+    private colorSelect: ColorPicker;
     private dirty: boolean = true;
 
     constructor(gradientInfo: GradientInfo) {
@@ -70,12 +72,13 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         presetLabel.innerText = "Preset:";
         presetRow.appendChild(presetLabel);
 
-        let presetSelect = createElement("select") as HTMLSelectElement;
-        presetSelect.add(createOptionElement("Select one...", ""));
-        AvatarCropper.settings.borderPresets.forEach((preset) => {
-            presetSelect.add(createOptionElement(preset.name, JSON.stringify(preset)));
-        });
-        presetRow.appendChild(presetSelect);
+        let presetSelect = new Dropdown("presetSelect", "Select one...");
+        let refreshPresets = (index: number = -1) => {
+            presetSelect.setOptions(AvatarCropper.settings.borderPresets.map(preset => ({ label: preset.name, value: JSON.stringify(preset) })));
+            presetSelect.selectedIndex = index;
+        };
+        refreshPresets();
+        presetRow.appendChild(presetSelect.container);
 
         let load = createElement("button");
         load.innerText = "Load this preset";
@@ -92,9 +95,10 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         overwrite.innerText = "Overwrite this preset";
         overwrite.addEventListener("click", () => {
             if (presetSelect.value) {
-                AvatarCropper.settings.borderPresets[presetSelect.selectedIndex - 1] = this.gradientInfo;
-                presetSelect.selectedOptions[0].value = JSON.stringify(this.gradientInfo);
+                let index = presetSelect.selectedIndex;
+                AvatarCropper.settings.borderPresets[index] = this.gradientInfo;
                 AvatarCropper.saveSettings();
+                refreshPresets(index);
             }  else {
                 showAlert("Please select a valid preset or save as new preset.");
             }
@@ -116,8 +120,7 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
                         this.gradientInfo.name = name;
                         AvatarCropper.settings.borderPresets.push(this.gradientInfo);
                         AvatarCropper.saveSettings();
-                        presetSelect.add(createOptionElement(name, JSON.stringify(this.gradientInfo)));
-                        presetSelect.selectedIndex = AvatarCropper.settings.borderPresets.length; // no - 1 because theres an extra at the beginning of the select
+                        refreshPresets(AvatarCropper.settings.borderPresets.length - 1);
                     }
                 }
             });
@@ -130,10 +133,9 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
             if (presetSelect.value) {
                 showConfirm("Are you sure you want to delete this preset?").then(confirmed => {
                     if (confirmed) {
-                        let index = presetSelect.selectedIndex - 1;
-                        AvatarCropper.settings.borderPresets.splice(index, 1);
+                        AvatarCropper.settings.borderPresets.splice(presetSelect.selectedIndex, 1);
                         AvatarCropper.saveSettings();
-                        presetSelect.remove(index + 1);
+                        refreshPresets();
                     }
                 });
             }
@@ -153,13 +155,12 @@ class GradientEditDialog extends InputDialog<GradientInfo> {
         rightCol.appendChild(this.gradientSlider.container);
 
         // color select //
-        this.colorSelect = createElement("input") as HTMLInputElement;
-        this.colorSelect.type = "color";
+        this.colorSelect = new ColorPicker("stopColor");
         this.colorSelect.value = this.gradientSlider.currentStopColor;
-        this.colorSelect.addEventListener("change", () => {
-            this.gradientSlider.currentStopColor = this.colorSelect.value;
+        this.colorSelect.on("input", (color: string) => {
+            this.gradientSlider.currentStopColor = color;
         });
-        rightCol.appendChild(this.colorSelect);
+        rightCol.appendChild(this.colorSelect.container);
 
         // buttons //
         let buttonRow = createElement("div", "row");

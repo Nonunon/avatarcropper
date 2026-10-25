@@ -72,10 +72,6 @@ body, .bigOverlay
             &:hover
                 background-color #1c2129
 
-        input[type=color]
-            height 32px
-            margin-top 6px
-
         .gradientSlider
             display inline-block
             width auto
@@ -479,8 +475,9 @@ body, .bigOverlay
 .menu .item.zoomBar .zoomLabel, .menu .item > button.zoomBar .zoomLabel
     display inline
 
-.menu .item#borderSelect.edit, .menu .item > button#borderSelect.edit
-    width calc(100% - 32px)
+.menu .item#borderSelect.edit
+    // room for the 32px color/gradient button and both margins beside it, scrollbar or not //
+    width calc(100% - 52px)
 
 .menu .item.borderEdit, .menu .item > button.borderEdit
     width 32px
@@ -531,7 +528,7 @@ body, .bigOverlay
 .dialog-backdrop.gradientEdit .leftCol > *:first-child, .dialog-backdrop.gradientEdit .rightCol > *:first-child
     margin-top 0
 
-.dialog-backdrop.gradientEdit button, .dialog-backdrop.gradientEdit select, .dialog-backdrop.gradientEdit input[type=color]
+.dialog-backdrop.gradientEdit button
     cursor pointer
     background-color #08090b
     color white
@@ -540,7 +537,7 @@ body, .bigOverlay
     box-sizing border-box
     border-radius 5px
 
-.dialog-backdrop.gradientEdit button:hover, .dialog-backdrop.gradientEdit select:hover, .dialog-backdrop.gradientEdit input[type=color]:hover
+.dialog-backdrop.gradientEdit button:hover
     background-color #1c2129
 
 .dialog-backdrop.alert, .dialog-backdrop.confirm, .dialog-backdrop.prompt
@@ -613,75 +610,6 @@ body, .bigOverlay
 
         &.current
             border 3px solid #393a3b
-
-.labelSlider
-    .labelSlider-label
-        width 100%
-        height 100%
-
-    .labelSlider-slider
-        position absolute
-        left 0
-        top 0
-        padding 0
-        -webkit-appearance none
-        width 100%
-        height 100%
-        margin 0
-        box-sizing border-box
-        border 0
-        background transparent
-        margin 0px
-        opacity 0.5
-
-        &::-webkit-slider-runnable-track
-            width 100%
-            height 32px
-            cursor pointer
-            background transparent
-            border-radius 0px
-            border 0
-
-        &::-webkit-slider-thumb
-            height 32px
-            width 32px
-            border-radius 12px
-            background #eeeeee
-            cursor pointer
-            -webkit-appearance none
-            margin-top 0px
-
-        &::-moz-range-track
-            width 100%
-            height 32px
-            cursor pointer
-            background transparent
-            border-radius 0px
-            border 0
-
-        &::-moz-range-thumb
-            border 0
-            height 32px
-            width 32px
-            border-radius 12px
-            background #eeeeee
-            cursor pointer
-
-        &::-ms-track
-            width 100%
-            height 32px
-            cursor pointer
-            background transparent
-            border-color transparent
-            color transparent
-
-        &::-moz-range-thumb-ms-thumb
-            border 0
-            width 32px
-            border-radius 12px
-            background #eeeeee
-            cursor pointer
-            height 32px
 
 .previews
     position absolute
@@ -793,4 +721,5 @@ body, .bigOverlay
 @media (max-width 375px)
     #footer
         display none
+@import 'controls.styl'
 @import 'discord.styl'

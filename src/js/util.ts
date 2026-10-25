@@ -57,14 +57,6 @@ export function makePixelated(e: HTMLImageElement | HTMLCanvasElement, pixelate:
     }
 }
 
-export function createOptionElement(text: string, value: string): HTMLOptionElement {
-    let ret = document.createElement("option");
-    ret.innerText = text;
-    ret.value = value;
-
-    return ret;
-}
-
 export function hideElement(element: HTMLElement): void {
     element.style.display = "none";
 }

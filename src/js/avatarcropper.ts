@@ -6,7 +6,6 @@ import {
     hideElement,
     showElement,
     getIEVersion,
-    createOptionElement,
 } from './util'
 import { LabelSlider } from './labeledslider'
 import Storage from './storage'
@@ -21,6 +20,8 @@ import { Border, GradientInfo } from './borders'
 import { Canvas } from './canvas'
 import { GradientEditButton } from './gradientedit'
 import { showAlert, showPrompt } from './nativedialogs'
+import { Dropdown } from './dropdown'
+import { ColorPicker } from './colorpicker'
 import { DiscordProfile } from './discordprofile'
 import { DiscordPicker } from './discordpicker'
 import { DiscordLook, defaultLook } from './discordlook'
@@ -57,7 +58,8 @@ export class AvatarCropper extends Widget {
     private flipVButton: HTMLElement
     private antialiasButton: HTMLElement
     private textOverlay: HTMLLabelElement
-    private borderSelect: HTMLSelectElement;
+    private borderSelect: Dropdown;
+    private borderEditors: () => void;
     private discordButton: HTMLElement
     private discordProfile: DiscordProfile
     private discordPicker: DiscordPicker
@@ -383,34 +385,28 @@ export class AvatarCropper extends Widget {
         GlobalEvents.emitEvent('resizelockchange')
 
         // create border options //
-        this.borderSelect = <HTMLSelectElement>createElement('select', 'item');
-        this.borderSelect.id = "borderSelect";
-        this.menu.appendChild(this.borderSelect);
+        this.borderSelect = new Dropdown('item', 'Border');
+        this.borderSelect.container.id = "borderSelect";
+        this.menu.appendChild(this.borderSelect.container);
 
-        let populateBorder = () => {
-            let len = this.borderSelect.options.length;
-            for (let i = 0; i < len; i++) {
-                this.borderSelect.options.remove(0);
-            }
-
-            this.borderSelect.add(createOptionElement("No Border", "none"));
-            this.borderSelect.add(createOptionElement("Solid Border", "solid"));
-            AvatarCropper.settings.borderPresets.forEach((preset) => {
-                this.borderSelect.add(createOptionElement(preset.name, JSON.stringify(preset)));
-            });
-            this.borderSelect.add(createOptionElement("Custom Gradient Border", "gradient"));
+        let populateBorder = (value?: string) => {
+            this.borderSelect.setOptions([
+                { label: "No Border", value: "none" },
+                { label: "Solid Border", value: "solid" },
+                ...AvatarCropper.settings.borderPresets.map(preset => ({ label: preset.name, value: JSON.stringify(preset) })),
+                { label: "Custom Gradient Border", value: "gradient" },
+            ], value);
         };
 
-        populateBorder();
+        populateBorder(Border.type === "solid" ? "solid" : Border.type === "gradient" ? "gradient" : "none");
 
-        let borderSolidEdit = createElement("input", "item borderEdit") as HTMLInputElement;
-        borderSolidEdit.type = "color";
+        let borderSolidEdit = new ColorPicker("item borderEdit");
         borderSolidEdit.value = Border.color;
-        borderSolidEdit.addEventListener("change", () => {
-            Border.color = borderSolidEdit.value;
+        borderSolidEdit.on("input", (color: string) => {
+            Border.color = color;
         });
-        hideElement(borderSolidEdit);
-        this.menu.appendChild(borderSolidEdit);
+        borderSolidEdit.hide();
+        this.menu.appendChild(borderSolidEdit.container);
 
         let borderGradientEdit = new GradientEditButton(new Point(32));
         borderGradientEdit.gradient = Border.gradient;
@@ -418,37 +414,32 @@ export class AvatarCropper extends Widget {
         borderGradientEdit.on("update", (gradientInfo: GradientInfo) => {
             borderGradientEdit.gradient = gradientInfo;
             Border.gradient = gradientInfo;
-            populateBorder();
-            this.borderSelect.selectedIndex = this.borderSelect.options.length - 1;
+            populateBorder("gradient");
         });
         borderGradientEdit.hide();
         this.menu.appendChild(borderGradientEdit.container);
 
-        this.borderSelect.addEventListener('change', () => {
-            if (this.borderSelect.value === "solid") {
-                showElement(borderSolidEdit);
-                borderGradientEdit.hide();
-                this.borderSelect.classList.add("edit");
+        let applyBorderChoice = (value: string) => {
+            borderSolidEdit.hide();
+            borderGradientEdit.hide();
+            this.borderSelect.container.classList.toggle("edit", value === "solid" || value === "gradient");
+
+            if (value === "solid") {
+                borderSolidEdit.show();
                 Border.type = "solid";
-            } else if (this.borderSelect.value === "gradient") {
-                hideElement(borderSolidEdit);
+            } else if (value === "gradient") {
                 borderGradientEdit.show();
-                this.borderSelect.classList.add("edit");
                 Border.type = "gradient";
-            } else if (this.borderSelect.value === "none") {
-                hideElement(borderSolidEdit);
-                borderGradientEdit.hide();
-                this.borderSelect.classList.remove("edit");
+            } else if (value === "none") {
                 Border.type = "none";
             } else {
-                hideElement(borderSolidEdit);
-                borderGradientEdit.hide();
-                this.borderSelect.classList.remove("edit");
                 Border.type = "gradient";
-                Border.gradient = JSON.parse(this.borderSelect.selectedOptions[0].value);
+                Border.gradient = JSON.parse(value);
                 borderGradientEdit.gradient = Border.gradient;
             }
-        });
+        };
+        this.borderSelect.on('change', applyBorderChoice);
+        this.borderEditors = () => applyBorderChoice(this.borderSelect.value);
 
         // create border slider //
         let borderSlider = new LabelSlider(0, 0.5, 0.01, 'Border Size', 'item')
@@ -562,14 +553,7 @@ export class AvatarCropper extends Widget {
                 (<HTMLElement>child).style.display = '';
             });
 
-            hideElement(document.querySelector("input.borderEdit"));
-            hideElement(document.querySelector("canvas.borderEdit"));
-
-            if (this.borderSelect.value === "solid") {
-                showElement(document.querySelector("input.borderEdit"));
-            } else if (this.borderSelect.value === "gradient") {
-                showElement(document.querySelector("canvas.borderEdit"));
-            }
+            this.borderEditors();
 
             this.toggleMenuButton.classList.remove('toggled')
             this.toggleMenuButton.innerText = this.toggleMenuButton.getAttribute(
