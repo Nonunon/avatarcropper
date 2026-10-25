@@ -10,3 +10,5 @@ dist/
 # Discord preview data (bot token and synced collectibles)
 discord.config.json
 public/discord/
+discord-seeds/
+discord-fonts/

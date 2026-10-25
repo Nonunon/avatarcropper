@@ -12,7 +12,8 @@
         "build": "npx parcel build src/index.pug --public-url ./",
         "start": "npx parcel src/index.pug",
         "discord:catalog": "node scripts/discord-sync.mjs catalog",
-        "discord:users": "node scripts/discord-sync.mjs users"
+        "discord:users": "node scripts/discord-sync.mjs users",
+        "discord:fonts": "node scripts/discord-sync.mjs fonts"
     },
     "staticFiles": {
         "staticPath": "public"

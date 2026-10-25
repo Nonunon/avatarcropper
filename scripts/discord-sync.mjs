@@ -3,13 +3,21 @@
 //   node scripts/discord-sync.mjs catalog [--download]   build the decoration + nameplate catalog
 //                                     [--no-store]   skip the Discord store lookup (mirror only)
 //   node scripts/discord-sync.mjs users [id ...]          snapshot users through your bot
-//   node scripts/discord-sync.mjs all [--download]        both
+//   node scripts/discord-sync.mjs fonts                   download the display name style fonts
+//   node scripts/discord-sync.mjs all [--download]        catalog, users and fonts
 //
 // --limit=N keeps only the first N of each catalog list (handy for a quick test).
 //
 // The mirror only has to supply SKU ids. Discord's public store listing endpoint (no token needed,
 // bots are refused by the shop endpoints) fills in each item's real asset, palette and category,
 // and each category lists its siblings, which finds items the mirror missed.
+//
+// Extra seeds: drop JSON saved from your own Discord client (DevTools > Network > collectibles-shop >
+// Response) into discord-seeds/ (gitignored). Every sku_id / category_sku_id in it gets crawled too.
+// Save the response body only, a HAR file also holds your account token.
+//
+// Fonts: the open licensed ones are downloaded automatically. For Discord's own gg sans or Neo-Castel,
+// put a font file you have into discord-fonts/ (gitignored) named gg-sans.* or neo-castel.*.
 //
 // Settings live in discord.config.json (gitignored, copy discord.config.example.json).
 // The bot token only ever stays in this script, it is never written into public/.
@@ -23,6 +31,8 @@ const OUT = path.join(ROOT, 'public', 'discord')
 // parcel only copies public/ on a rebuild, so a running dev server gets fresh files straight away too
 const DIST = path.join(ROOT, 'dist', 'discord')
 const CONFIG_PATH = path.join(ROOT, 'discord.config.json')
+const SEEDS_DIR = path.join(ROOT, 'discord-seeds')
+const DROP_IN_FONTS = path.join(ROOT, 'discord-fonts')
 const CDN = 'https://cdn.discordapp.com'
 const STORE = 'https://discord.com/api/v9/store/published-listings/skus/'
 const USER_AGENT = 'DiscordBot (https://github.com/sapic/avatarcropper, 1.0)'
@@ -199,13 +209,46 @@ function storeEntry(sku, category) {
     return null // profile effects and the like
 }
 
-// walks the store from the mirror's SKUs: item -> its category -> every sibling in that category //
+// pulls every sku id out of whatever shop JSON was saved into discord-seeds/ //
+function readSeedFiles() {
+    if (!fs.existsSync(SEEDS_DIR)) {
+        return []
+    }
+    let ids = new Set()
+    let walk = o => {
+        if (Array.isArray(o)) return o.forEach(walk)
+        if (!o || typeof o !== 'object') return
+        for (let [k, v] of Object.entries(o)) {
+            if (/^(sku_id|skuId|category_sku_id|categorySkuId)$/.test(k) && /^\d{17,20}$/.test(String(v))) {
+                ids.add(String(v))
+            } else {
+                walk(v)
+            }
+        }
+    }
+    for (let file of fs.readdirSync(SEEDS_DIR).filter(f => f.endsWith('.json'))) {
+        try {
+            walk(JSON.parse(fs.readFileSync(path.join(SEEDS_DIR, file), 'utf8')))
+        } catch (e) {
+            console.warn(`  couldn't read discord-seeds/${file}: ${e.message}`)
+        }
+    }
+    return [...ids]
+}
+
+// walks the store from the seed SKUs: item -> its category -> every sibling in that category //
 async function crawlStore(config, seeds) {
     let found = new Map()
     let categories = new Set()
     let add = (sku, category) => {
         let e = storeEntry(sku, category)
         if (e) found.set(sku.id, e)
+    }
+    let harvest = category => {
+        categories.add(category.sku.id)
+        for (let child of category.child_skus || []) {
+            add(child, category.sku.name)
+        }
     }
 
     console.log(`Looking up ${seeds.length} SKUs in the Discord store...`)
@@ -215,10 +258,14 @@ async function crawlStore(config, seeds) {
         if (checked % 100 === 0) {
             console.log(`  ${checked}/${seeds.length} seeds, ${categories.size} categories, ${found.size} items`)
         }
-        if (found.has(id)) continue
+        if (found.has(id) || categories.has(id)) continue
 
         let listing = await storeGet(config, id)
         if (!listing || !listing.sku) continue
+        if (listing.child_skus) {
+            harvest(listing)
+            continue
+        }
         add(listing.sku, null)
 
         let meta = listing.sku.tenant_metadata && listing.sku.tenant_metadata.collectibles
@@ -226,10 +273,8 @@ async function crawlStore(config, seeds) {
         if (categoryId && !categories.has(categoryId)) {
             categories.add(categoryId)
             let category = await storeGet(config, categoryId)
-            if (category) {
-                for (let child of category.child_skus || []) {
-                    add(child, category.sku.name)
-                }
+            if (category && category.sku) {
+                harvest(category)
             }
         }
     }
@@ -289,7 +334,12 @@ async function buildCatalog(config, doDownload, limit, useStore) {
     }
 
     if (useStore) {
-        let seeds = [...new Set([...decorations, ...nameplates].map(x => x.sku).filter(Boolean))]
+        let extra = readSeedFiles()
+        if (extra.length) {
+            console.log(`Found ${extra.length} extra SKU ids in discord-seeds/.`)
+        }
+        // your own seeds go first, they're the most likely to hold new categories //
+        let seeds = [...new Set([...extra, ...[...decorations, ...nameplates].map(x => x.sku).filter(Boolean)])]
         let store = await crawlStore(config, limit ? seeds.slice(0, limit) : seeds)
         let mirrorCount = decorations.length + nameplates.length
         decorations = mergeStore(decorations, store.filter(s => s.kind === 'decoration').map(s => s.entry), d => d.asset)
@@ -430,6 +480,100 @@ async function syncUsers(config, ids) {
     console.log('Wrote public/discord/users.json')
 }
 
+// Discord's own family names, so the app can use them directly //
+const GOOGLE_FONTS = [
+    ['Bangers', 'Bangers'],
+    ['BioRhyme', 'BioRhyme:wght@700'],
+    ['Sakura', 'Cherry Bomb One'],
+    ['Jellybean', 'Chicle'],
+    ['Modern', 'MuseoModerno:wght@700'],
+    ['8Bit', 'Pixelify Sans:wght@600'],
+    ['Tempo', 'Zilla Slab:wght@700'],
+    ['Monkey Bars', 'Playpen Sans:wght@600'],
+    ['Mainframe', 'Orbitron:wght@700'],
+    ['Headbang', 'New Rocker'],
+    ['Journal', 'Kalam:wght@700'],
+]
+
+// open licensed (SIL OFL), straight from the foundries //
+const FOUNDRY_FONTS = [
+    {
+        family: 'Compagnon',
+        url: 'https://gitlab.com/velvetyne/compagnon/-/raw/master/fonts/webfonts/Compagnon-Bold.woff2',
+        license: 'https://gitlab.com/velvetyne/compagnon/-/raw/master/LICENSE.txt',
+    },
+    {
+        family: 'Ribes',
+        url: 'https://raw.githubusercontent.com/collletttivo/ribes/HEAD/fonts/Ribes-Regular.woff2',
+        license: 'https://raw.githubusercontent.com/collletttivo/ribes/HEAD/LICENSE.txt',
+    },
+    {
+        family: 'Vampyre',
+        url: 'https://raw.githubusercontent.com/collletttivo/sinistre/HEAD/fonts/Sinistre-Bold.woff2',
+        license: 'https://raw.githubusercontent.com/collletttivo/sinistre/HEAD/LICENSE.txt',
+    },
+]
+
+// not freely licensed, only used if you supply the file yourself //
+const DROP_IN = [['gg sans', 'gg-sans'], ['Medieval', 'neo-castel']]
+
+const FONT_FORMATS = { '.woff2': 'woff2', '.woff': 'woff', '.otf': 'opentype', '.ttf': 'truetype' }
+
+function fontFace(family, file, format) {
+    return `@font-face {\n  font-family: '${family}';\n  font-weight: 100 900;\n  font-display: swap;\n  src: url(files/${file}) format('${format}');\n}`
+}
+
+async function syncFonts() {
+    let css = []
+    let families = []
+    let browserUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+
+    console.log('Downloading Google fonts...')
+    for (let [family, query] of GOOGLE_FONTS) {
+        let res = await fetch('https://fonts.googleapis.com/css2?family=' + query.replace(/ /g, '+') + '&display=swap', {
+            headers: { 'User-Agent': browserUA },
+        })
+        if (!res.ok) {
+            console.warn(`  skipped ${family}: ${res.status}`)
+            continue
+        }
+        let text = await res.text()
+        let files = [...text.matchAll(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/g)].map(m => m[1])
+        for (let file of files) {
+            let name = file.split('/').slice(-3).join('-')
+            await download(file, path.join('fonts', 'files', name))
+            text = text.replace(file, 'files/' + name)
+        }
+        css.push(`/* ${family} = ${query.split(':')[0]} */\n` + text.replace(/font-family: '[^']+';/g, `font-family: '${family}';`))
+        families.push(family)
+    }
+
+    console.log('Downloading foundry fonts...')
+    for (let f of FOUNDRY_FONTS) {
+        let name = path.basename(new URL(f.url).pathname)
+        await download(f.url, path.join('fonts', 'files', name))
+        await download(f.license, path.join('fonts', 'licenses', f.family + '.txt'))
+        css.push(fontFace(f.family, name, 'woff2'))
+        families.push(f.family)
+    }
+
+    if (fs.existsSync(DROP_IN_FONTS)) {
+        let available = fs.readdirSync(DROP_IN_FONTS)
+        for (let [family, base] of DROP_IN) {
+            let file = available.find(f => path.parse(f).name.toLowerCase() === base && FONT_FORMATS[path.extname(f).toLowerCase()])
+            if (!file) continue
+            writeFile(path.join('fonts', 'files', file), fs.readFileSync(path.join(DROP_IN_FONTS, file)))
+            css.push(fontFace(family, file, FONT_FORMATS[path.extname(file).toLowerCase()]))
+            families.push(family)
+            console.log(`  using your ${file} for ${family}`)
+        }
+    }
+
+    writeFile(path.join('fonts', 'fonts.css'), css.join('\n\n') + '\n')
+    writeJson(path.join('fonts', 'fonts.json'), { families })
+    console.log(`Wrote public/discord/fonts/ (${families.length} families)`)
+}
+
 async function main() {
     let [command = 'catalog', ...args] = process.argv.slice(2)
     let flags = args.filter(a => a.startsWith('--'))
@@ -445,8 +589,11 @@ async function main() {
     if (command === 'users' || command === 'all') {
         await syncUsers(config, rest.length ? rest : config.userIds)
     }
-    if (!['catalog', 'users', 'all'].includes(command)) {
-        console.log('Usage: node scripts/discord-sync.mjs <catalog|users|all> [--download] [--no-store] [user ids...]')
+    if (command === 'fonts' || command === 'all') {
+        await syncFonts()
+    }
+    if (!['catalog', 'users', 'fonts', 'all'].includes(command)) {
+        console.log('Usage: node scripts/discord-sync.mjs <catalog|users|fonts|all> [--download] [--no-store] [user ids...]')
         process.exitCode = 1
     }
 }
