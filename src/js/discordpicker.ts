@@ -2,7 +2,7 @@ import { ClosableDialog } from './closabledialog'
 import { createElement } from './util'
 import {
     DiscordLook, DiscordCatalog, DiscordUserLook, DiscordNameStyle,
-    discordFonts, discordEffects, discordSwatches, applyNameStyle, fetchDiscordJson,
+    discordFonts, discordEffects, discordSwatches, applyNameStyle, fetchDiscordJson, loadDiscordFonts, isStandIn,
 } from './discordlook'
 
 type Tab = 'decoration' | 'nameplate' | 'name' | 'users'
@@ -58,6 +58,7 @@ export class DiscordPicker extends ClosableDialog {
             this.body.innerText = 'Loading...'
             this.catalog = await fetchDiscordJson<DiscordCatalog>('catalog.json')
             this.users = await fetchDiscordJson<DiscordUserLook[]>('users.json')
+            await loadDiscordFonts()
         }
         this.setTab(this.tab)
     }
@@ -238,10 +239,18 @@ export class DiscordPicker extends ClosableDialog {
 
         section('Font')
         let fonts = createElement('div', 'dpChoices')
+        let anyStandIn = false
         discordFonts.forEach(f => {
             let b = createElement('button', 'dpChoice')
-            b.innerText = f.name + (f.standIn ? '*' : '')
+            let standIn = isStandIn(f.id)
+            anyStandIn = anyStandIn || standIn
+            b.innerText = f.name + (standIn ? '*' : '')
             b.style.fontFamily = f.family
+            if (f.font !== f.name) {
+                let real = createElement('span', 'dpFontReal')
+                real.innerText = f.font
+                b.appendChild(real)
+            }
             b.classList.toggle('toggled', style.font === f.id)
             b.addEventListener('click', () => {
                 style.font = f.id
@@ -252,7 +261,9 @@ export class DiscordPicker extends ClosableDialog {
             fonts.appendChild(b)
         })
         this.body.appendChild(fonts)
-        this.hint('* close stand-in, Discord\'s own font isn\'t freely available')
+        if (anyStandIn) {
+            this.hint('* stand-in font. Run npm run discord:fonts for the open licensed ones; gg sans and Néo-Castel only show up if you put the file in discord-fonts/ (gg-sans.woff2, neo-castel.woff2) and run it again.')
+        }
 
         section('Effect')
         let effects = createElement('div', 'dpChoices')
@@ -273,15 +284,39 @@ export class DiscordPicker extends ClosableDialog {
         this.body.appendChild(effects)
         this.body.appendChild(colorArea)
 
+        let spare = ['#ffffff', '#5865f2', '#eb459e', '#ffc345', '#2ecc71']
         let buildColors = () => {
             colorArea.innerHTML = ''
             let fx = discordEffects.find(e => e.id === style.effect) || discordEffects[0]
-            let count = fx.twoColors ? 2 : 1
+            let count = fx.colors > 2 ? Math.min(Math.max(style.colors.length, 2), fx.colors) : fx.colors
             while (style.colors.length < count) {
-                style.colors.push(style.colors.length ? '#5865f2' : '#ffffff')
+                style.colors.push(spare[style.colors.length])
             }
+            style.colors.length = count
+
+            // gummy and prism take 1 to 5 colors //
+            if (fx.colors > 2) {
+                let h = createElement('h3', 'dpSection')
+                h.innerText = 'Colors'
+                let counts = createElement('div', 'dpChoices')
+                for (let n = 1; n <= fx.colors; n++) {
+                    let b = createElement('button', 'dpChoice')
+                    b.innerText = String(n)
+                    b.classList.toggle('toggled', n === count)
+                    b.addEventListener('click', () => {
+                        while (style.colors.length < n) style.colors.push(spare[style.colors.length])
+                        style.colors.length = n
+                        buildColors()
+                        refresh()
+                    })
+                    counts.appendChild(b)
+                }
+                colorArea.appendChild(h)
+                colorArea.appendChild(counts)
+            }
+
             for (let i = 0; i < count; i++) {
-                colorArea.appendChild(this.colorPicker(fx.twoColors ? `Color ${i + 1}` : 'Color', style, i, refresh))
+                colorArea.appendChild(this.colorPicker(count > 1 ? `Color ${i + 1}` : 'Color', style, i, refresh))
             }
         }
 
