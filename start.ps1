@@ -38,7 +38,7 @@ if (-not (Test-Path $stamp) -or (Get-Item 'package-lock.json').LastWriteTime -gt
 
 if ($Clean) {
     Say 'Clearing Parcel cache...' Cyan
-    Remove-Item -Recurse -Force '.parcel-cache', 'dist' -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force '.parcel-cache*', 'dist', 'dist-*' -ErrorAction SilentlyContinue
 }
 
 # Discord preview data. the sync runs in its own window so the site starts right away //
@@ -70,5 +70,7 @@ if ($busy) {
 
 Say "Starting Avatar Cropper on http://localhost:$Port (Ctrl+C to stop)" Green
 $parcelArgs = @('parcel', 'src/index.pug', '--port', $Port)
+# a second copy on another port gets its own output and cache, sharing them corrupts the first one's build //
+if ($Port -ne 1234) { $parcelArgs += @('--dist-dir', "dist-$Port", '--cache-dir', ".parcel-cache-$Port") }
 if (-not $NoBrowser) { $parcelArgs += '--open' }
 npx @parcelArgs

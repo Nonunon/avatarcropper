@@ -12,3 +12,5 @@ discord.config.json
 public/discord/
 discord-seeds/
 discord-fonts/
+dist-*/
+.parcel-cache-*
