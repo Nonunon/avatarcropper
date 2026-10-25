@@ -1,5 +1,6 @@
 import { hideElement } from "./util";
 import { EventClass } from "./eventclass";
+import { showAlert } from "./nativedialogs";
 
 export class ImagePasted extends EventClass {
 
@@ -12,9 +13,12 @@ export class ImagePasted extends EventClass {
 
         try {
 
-            let fetched_link = await fetch(link).catch(e => {  console.log(`Failed to fetch from ${link}!`)  }) // Fetch the link, if it hits an error, just log it in console. An alert dialog would be ideal.
+            let fetched_link = await fetch(link).catch(() => null); // Most failures here are the site refusing cross-origin requests.
 
-            if (!fetched_link) return; // If we don't get a result, return.
+            if (!fetched_link || !fetched_link.ok) {
+                showAlert("Couldn't download that image, the site may not allow it. Save it and open the file instead.");
+                return;
+            }
 
             let blobbed_link = await fetched_link.blob(); // Try converting it to a blob.
             if (!blobbed_link.type.includes("image")) return; // If it's not an image, return.
