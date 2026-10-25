@@ -10,7 +10,9 @@
     },
     "scripts": {
         "build": "npx parcel build src/index.pug --public-url ./",
-        "start": "npx parcel src/index.pug"
+        "start": "npx parcel src/index.pug",
+        "discord:catalog": "node scripts/discord-sync.mjs catalog",
+        "discord:users": "node scripts/discord-sync.mjs users"
     },
     "staticFiles": {
         "staticPath": "public"
