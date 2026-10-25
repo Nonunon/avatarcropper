@@ -1,26 +1,28 @@
 import { CropView } from "./cropview";
-import { Dialog } from "./dialog";
 import { createElement, hideElement, showElement, makePixelated } from "./util";
 import { FractionalProgressBar } from "./fractionalprogressbar";
 import { Canvas } from "./canvas";
 import { ClosableDialog } from "./closabledialog";
 import { Point } from "./point";
 import { settings } from "./state";
-
-import SuperGif from './supergif.js'
-import GIF from './gif.js'
 import { compose, bannerArea } from "./compose";
 import type { Rect, CropGeometry } from "./compose";
 import { FrameSource, openFrames } from "./frames";
+import { createEncoder, AnimatedFormat } from "./encoders";
+import SuperGif from "./supergif.js";
 
+// one output choice in the dialog, made the first time it's picked //
 interface CropOption {
     label: string;
-    url: string;
+    extension: string;
+    url?: string;
+    make: () => Promise<string>;
 }
+
+class Aborted extends Error { }
 
 export class Renderer extends ClosableDialog {
     private readonly renderedString = "Rendered! Yayy! ❤️";
-    private readonly renderingString = "Rendering...";
     private readonly cropView: CropView;
     private shouldStopRendering: boolean = false;
     private currentlyRendering: boolean = false;
@@ -30,8 +32,10 @@ export class Renderer extends ClosableDialog {
     private headerElement: HTMLElement;
     private noteElement: HTMLElement;
     private pleaseWaitElement: HTMLElement;
-    private saveButton: HTMLElement;
+    private saveButton: HTMLAnchorElement;
     private loadGif: any;
+    private frames: FrameSource | null = null;
+    private urls: string[] = [];
     private readonly initialized: boolean = false;
 
     constructor(cropView: CropView) {
@@ -43,10 +47,7 @@ export class Renderer extends ClosableDialog {
         this.cropView = cropView;
 
         this.headerElement = createElement("h1", "header");
-        this.headerElement.innerText = this.renderingString;
-
         this.progressBar = new FractionalProgressBar();
-
         this.imageElement = <HTMLImageElement>createElement("img", "image");
 
         this.noteElement = createElement("div", "note");
@@ -57,11 +58,8 @@ export class Renderer extends ClosableDialog {
 
         this.optionBar = createElement("div", "optionBar");
 
-        this.saveButton = createElement("a", "save");
+        this.saveButton = <HTMLAnchorElement>createElement("a", "save");
         this.saveButton.innerText = "Save";
-        this.saveButton.addEventListener("mouseover", () => {
-            (<HTMLAnchorElement>this.saveButton).href = this.imageElement.src;
-        });
 
         this.appendChild(
             this.headerElement,
@@ -76,148 +74,27 @@ export class Renderer extends ClosableDialog {
         this.initialized = true;
     }
 
-    public render() {
-        this.currentlyRendering = true;
+    public render(): void {
         this.shouldStopRendering = false;
         this.show();
 
-        if (this.cropView.currentFileType === "gif") {
+        if (this.cropView.isAnimated) {
             this.renderAnimated();
         }
         else {
-            this.getFrameURLs(this.cropView.image, this.display.bind(this));
-            this.currentlyRendering = false;
+            this.display(this.stillOptions(this.cropView.image));
         }
     }
 
-    private stopIfAsked(): boolean {
-        if (this.shouldStopRendering) {
-            this.currentlyRendering = false;
-            this.tryClose();
-            return true;
-        }
-        return false;
-    }
-
-    // frames come from the browser's decoder (gif, webp, apng, avif), or supergif for gifs where it's missing //
-    private async renderAnimated(): Promise<void> {
-        let source = await openFrames(this.cropView.sourceFile, this.cropView.sourceType);
-        if (source) {
-            this.encodeGif(source);
-            return;
-        }
-
-        let gif = new SuperGif({
-            gif: this.cropView.image.cloneNode()
-        });
-        this.loadGif = gif;
-
-        gif.load(() => {
-            this.loadGif = null;
-            this.encodeGif({
-                length: gif.get_length(),
-                width: gif.get_canvas().width,
-                height: gif.get_canvas().height,
-                delay: (i: number) => gif.get_frames()[i].delay * 10 || 100,
-                draw: async (i: number, target: Canvas) => {
-                    gif.move_to(i);
-                    target.clear();
-                    target.drawImage(gif.get_canvas(), new Point(0));
-                },
-                close: () => { },
-            });
-        }, undefined, () => {
-            this.loadGif = null;
-            this.currentlyRendering = false;
-            this.tryClose();
-        });
-    }
-
-    private encodeGif(source: FrameSource): void {
-        if (this.stopIfAsked()) {
-            source.close();
-            return;
-        }
-
-        let geo = this.cropView.geometry;
-        let banner = settings.state.banneroutlinesEnabled;
-        let area = banner ? bannerArea(geo.crop) : geo.crop;
-        let width = Math.round(area.width), height = Math.round(area.height);
-
-        let saveGif = new GIF({
-            workers: Math.min(Math.max((navigator.hardwareConcurrency || 4) - 1, 2), 8),
-            quality: 1,
-            dither: false,
-            width: width,
-            height: height,
-            debug: false,
-            copy: true
-        });
-
-        let len = source.length;
-        this.progressBar.addFractionPart(1 / 6, len);
-
-        // one pair of canvases reused for every frame, handed straight to the encoder //
-        let frame = new Canvas({ size: new Point(source.width, source.height) });
-        let crop = this.canvas(width, height);
-
-        let renderFrame = async (i: number) => {
-            if (this.stopIfAsked()) {
-                source.close();
-                return;
-            }
-
-            await source.draw(i, frame);
-            this.composeTo(crop, frame.canvas, geo, area, "square", !banner);
-
-            saveGif.addFrame(crop, {
-                delay: source.delay(i),
-                copy: true
-            });
-
-            this.progressBar.step();
-
-            if (i + 1 === len) {
-                source.close();
-                saveGif.render();
-            }
-            else {
-                // yield so the progress bar can paint //
-                setTimeout(() => renderFrame(i + 1), 0);
-            }
-        };
-
-        saveGif.on("finished", (blob: Blob) => {
-            this.display([
-                {
-                    label: "GIF",
-                    url: URL.createObjectURL(blob)
-                }
-            ]);
-
-            this.currentlyRendering = false;
-        });
-
-        saveGif.on("abort", () => {
-            this.currentlyRendering = false;
-            this.tryClose();
-        });
-
-        saveGif.on("progress", (progress: number) => {
-            this.progressBar.progress = 1 / 6 + progress * 5 / 6;
-
-            if (this.shouldStopRendering) {
-                saveGif.abort();
-            }
-        });
-
-        renderFrame(0);
+    private get baseName(): string {
+        let name = this.cropView.filename || "avatar_cropped.png";
+        return name.substring(0, name.lastIndexOf(".")) || name;
     }
 
     private canvas(width: number, height: number): CanvasRenderingContext2D {
         let c = document.createElement("canvas");
-        c.width = width;
-        c.height = height;
+        c.width = Math.max(1, Math.round(width));
+        c.height = Math.max(1, Math.round(height));
         return c.getContext("2d", { willReadFrequently: true });
     }
 
@@ -230,7 +107,15 @@ export class Renderer extends ClosableDialog {
         });
     }
 
-    private getFrameURLs(frame: CanvasImageSource, callback: (options: CropOption[]) => void): void {
+    private track(blob: Blob): string {
+        let url = URL.createObjectURL(blob);
+        this.urls.push(url);
+        return url;
+    }
+
+    // ---------- stills ---------- //
+
+    private stillOptions(frame: CanvasImageSource): CropOption[] {
         let geo = this.cropView.geometry;
         let outputs: { label: string, area: Rect, shape: "circle" | "square", border: boolean }[] = [
             { label: "Square", area: geo.crop, shape: "square", border: true },
@@ -240,72 +125,186 @@ export class Renderer extends ClosableDialog {
             outputs.push({ label: "Discord Banner", area: bannerArea(geo.crop), shape: "square", border: false });
         }
 
-        let ret: CropOption[] = [];
-        let counter = 0;
-        outputs.forEach((out, index) => {
-            let ctx = this.canvas(Math.round(out.area.width), Math.round(out.area.height));
-            this.composeTo(ctx, frame, geo, out.area, out.shape, out.border);
-            ctx.canvas.toBlob(blob => {
-                ret[index] = { url: URL.createObjectURL(blob), label: out.label };
-                if (++counter === outputs.length) {
-                    callback(ret);
-                }
+        return outputs.map(out => ({
+            label: out.label,
+            extension: "png",
+            make: () => new Promise<string>(resolve => {
+                let ctx = this.canvas(out.area.width, out.area.height);
+                this.composeTo(ctx, frame, geo, out.area, out.shape, out.border);
+                ctx.canvas.toBlob(blob => resolve(this.track(blob)), "image/png");
+            }),
+        }));
+    }
+
+    // ---------- animations ---------- //
+
+    // frames come from the browser's decoder (gif, webp, apng, avif), or supergif for gifs where it's missing //
+    private async openSource(): Promise<FrameSource> {
+        let source = await openFrames(this.cropView.sourceFile, this.cropView.sourceType);
+        if (source) {
+            return source;
+        }
+
+        return new Promise((resolve, reject) => {
+            let gif = new SuperGif({ gif: this.cropView.image.cloneNode() });
+            this.loadGif = gif;
+            gif.load(() => {
+                this.loadGif = null;
+                resolve({
+                    length: gif.get_length(),
+                    width: gif.get_canvas().width,
+                    height: gif.get_canvas().height,
+                    delay: (i: number) => gif.get_frames()[i].delay * 10 || 100,
+                    draw: async (i: number, target: Canvas) => {
+                        gif.move_to(i);
+                        target.clear();
+                        target.drawImage(gif.get_canvas(), new Point(0));
+                    },
+                    close: () => { },
+                });
+            }, undefined, () => {
+                this.loadGif = null;
+                reject(new Aborted());
             });
         });
     }
 
-    private display(cropOptions: CropOption[]): void {
-        this.progressBar.hide();
-        showElement(this.optionBar);
-        showElement(this.saveButton);
-        this.headerElement.innerText = this.renderedString;
-        this.optionBar.innerHTML = "";
-        let firstButton: HTMLElement;
+    private async renderAnimated(): Promise<void> {
+        this.currentlyRendering = true;
+        try {
+            this.frames = await this.openSource();
+        } catch {
+            this.finishAborted();
+            return;
+        }
+        this.currentlyRendering = false;
+        if (this.shouldStopRendering) {
+            this.finishAborted();
+            return;
+        }
 
-        cropOptions.forEach((option, i) => {
+        let make = (format: AnimatedFormat) => () => this.encode(format);
+        this.display([
+            { label: "GIF", extension: "gif", make: make("gif") },
+            { label: "WebP", extension: "webp", make: make("webp") },
+            { label: "APNG", extension: "png", make: make("apng") },
+        ]);
+    }
+
+    private async encode(format: AnimatedFormat): Promise<string> {
+        let source = this.frames;
+        let geo = this.cropView.geometry;
+        let banner = settings.state.banneroutlinesEnabled;
+        let area = banner ? bannerArea(geo.crop) : geo.crop;
+        let crop = this.canvas(area.width, area.height);
+        let frame = new Canvas({ size: new Point(source.width, source.height) });
+        let encoder = createEncoder(format, crop.canvas.width, crop.canvas.height);
+
+        // gif spends most of its time in the workers afterwards, the others while adding frames //
+        let addShare = format === "gif" ? 1 / 6 : 0.95;
+        this.progressBar.reset();
+        this.progressBar.addFractionPart(addShare, source.length);
+
+        for (let i = 0; i < source.length; i++) {
+            if (this.shouldStopRendering) {
+                encoder.abort();
+                throw new Aborted();
+            }
+            await source.draw(i, frame);
+            this.composeTo(crop, frame.canvas, geo, area, "square", !banner);
+            await encoder.add(crop, source.delay(i));
+            this.progressBar.step();
+            // yield so the progress bar can paint //
+            await new Promise(r => setTimeout(r, 0));
+        }
+
+        let blob = await encoder.finish(p => {
+            this.progressBar.progress = addShare + p * (1 - addShare);
+            if (this.shouldStopRendering) encoder.abort();
+        });
+        return this.track(blob);
+    }
+
+    // ---------- dialog ---------- //
+
+    private display(options: CropOption[]): void {
+        this.optionBar.innerHTML = "";
+        showElement(this.optionBar);
+        let buttons: HTMLElement[] = [];
+
+        let select = async (option: CropOption, button: HTMLElement) => {
+            if (this.currentlyRendering) {
+                return;
+            }
+            buttons.forEach(b => b.classList.toggle("toggled", b === button));
+
+            if (!option.url) {
+                this.currentlyRendering = true;
+                this.headerElement.innerText = "Rendering " + option.label + "...";
+                hideElement(this.saveButton);
+                this.progressBar.show();
+                try {
+                    option.url = await option.make();
+                } catch (e) {
+                    this.currentlyRendering = false;
+                    if (e instanceof Aborted || this.shouldStopRendering) {
+                        this.finishAborted();
+                    } else {
+                        this.headerElement.innerText = "Couldn't make the " + option.label + ": " + (e as Error).message;
+                        this.progressBar.hide();
+                    }
+                    return;
+                }
+                this.currentlyRendering = false;
+                if (this.shouldStopRendering) {
+                    this.finishAborted();
+                    return;
+                }
+            }
+
+            this.progressBar.hide();
+            this.headerElement.innerText = this.renderedString;
+            this.imageElement.src = option.url;
+            this.saveButton.href = option.url;
+            let suffix = option.label === "Circle" ? "_circle" : option.label === "Discord Banner" ? "_banner" : "";
+            this.saveButton.download = this.baseName + suffix + "." + option.extension;
+            showElement(this.saveButton);
+        };
+
+        options.forEach(option => {
             let b = createElement("button", "option");
             b.innerText = option.label;
-            (<any>b).url = option.url;
-            b.addEventListener("click", () => {
-                this.imageElement.src = option.url;
-
-                let bs = this.optionBar.children;
-                for (let i = 0; i < bs.length; i++) {
-                    bs[i].classList.remove("toggled");
-                }
-
-                b.classList.add("toggled");
-            });
-
+            b.addEventListener("click", () => select(option, b));
             this.optionBar.appendChild(b);
-
-            if (i === 0) {
-                firstButton = b;
-            }
+            buttons.push(b);
         });
 
         this.imageElement.onload = () => {
             this.contentContainer.scrollTop = this.contentContainer.scrollHeight;
-            this.imageElement.onload = null;
         };
 
-        firstButton.click();
+        select(options[0], buttons[0]);
     }
 
-    public show() {
+    private finishAborted(): void {
+        this.currentlyRendering = false;
+        this.shouldStopRendering = false;
+        this.tryClose();
+    }
+
+    public show(): void {
         this.progressBar.show();
         this.progressBar.reset();
-        this.headerElement.innerText = this.renderingString;
+        this.headerElement.innerText = "Rendering...";
         hideElement(this.optionBar);
         hideElement(this.saveButton);
         hideElement(this.pleaseWaitElement);
-        this.imageElement.src = "";
-        this.saveButton.setAttribute("download", this.cropView.filename);
+        this.imageElement.removeAttribute("src");
         makePixelated(this.imageElement, !this.cropView.antialias);
         super.show();
     }
 
-    public hide(force: boolean = false) {
+    public hide(force: boolean = false): void {
         if (force || !this.initialized) {
             super.hide();
         }
@@ -322,10 +321,10 @@ export class Renderer extends ClosableDialog {
             return false;
         }
 
-        let bs = this.optionBar.children;
-        for (let i = 0; i < bs.length; i++) {
-            (<any>bs[i]).url && URL.revokeObjectURL((<any>bs[i]).url);
-        }
+        this.urls.forEach(url => URL.revokeObjectURL(url));
+        this.urls = [];
+        this.frames && this.frames.close();
+        this.frames = null;
 
         this.emitEvent("close");
         this.hide(true);
