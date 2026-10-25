@@ -16,7 +16,8 @@
         "typecheck": "tsc --noEmit",
         "discord:catalog": "node scripts/discord-sync.mjs catalog",
         "discord:users": "node scripts/discord-sync.mjs users",
-        "discord:fonts": "node scripts/discord-sync.mjs fonts"
+        "discord:fonts": "node scripts/discord-sync.mjs fonts",
+        "test": "node --test \"tests/*.test.ts\""
     },
     "devDependencies": {
         "@types/node": "^22.20.5",
