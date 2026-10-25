@@ -1,10 +1,15 @@
 // Pulls Discord collectibles data into public/discord/ for the Discord profile preview.
 //
 //   node scripts/discord-sync.mjs catalog [--download]   build the decoration + nameplate catalog
+//                                     [--no-store]   skip the Discord store lookup (mirror only)
 //   node scripts/discord-sync.mjs users [id ...]          snapshot users through your bot
 //   node scripts/discord-sync.mjs all [--download]        both
 //
 // --limit=N keeps only the first N of each catalog list (handy for a quick test).
+//
+// The mirror only has to supply SKU ids. Discord's public store listing endpoint (no token needed,
+// bots are refused by the shop endpoints) fills in each item's real asset, palette and category,
+// and each category lists its siblings, which finds items the mirror missed.
 //
 // Settings live in discord.config.json (gitignored, copy discord.config.example.json).
 // The bot token only ever stays in this script, it is never written into public/.
@@ -19,6 +24,8 @@ const OUT = path.join(ROOT, 'public', 'discord')
 const DIST = path.join(ROOT, 'dist', 'discord')
 const CONFIG_PATH = path.join(ROOT, 'discord.config.json')
 const CDN = 'https://cdn.discordapp.com'
+const STORE = 'https://discord.com/api/v9/store/published-listings/skus/'
+const USER_AGENT = 'DiscordBot (https://github.com/sapic/avatarcropper, 1.0)'
 
 const defaults = {
     botToken: '',
@@ -31,6 +38,8 @@ const defaults = {
         root: 'discord_collectibles',
     },
     download: false,
+    store: true,
+    storeDelayMs: 300,
 }
 
 function loadConfig() {
@@ -140,7 +149,103 @@ function groupByItem(paths, root, category) {
     return items
 }
 
-async function buildCatalog(config, doDownload, limit) {
+async function storeGet(config, sku) {
+    for (;;) {
+        let res = await fetch(STORE + sku, { headers: { 'User-Agent': USER_AGENT } })
+        if (res.status === 429) {
+            let body = await res.json().catch(() => ({}))
+            await sleep(((body.retry_after || 1) * 1000) + 250)
+            continue
+        }
+        // keep it slow, this is an unofficial endpoint //
+        await sleep(config.storeDelayMs)
+        return res.ok ? res.json() : null
+    }
+}
+
+function storeEntry(sku, category) {
+    let meta = sku.tenant_metadata && sku.tenant_metadata.collectibles
+    let item = meta && meta.item
+    if (!item || !item.asset) {
+        return null
+    }
+    if (item.type === 0) {
+        return {
+            kind: 'decoration',
+            entry: {
+                name: sku.name,
+                asset: item.asset,
+                sku: sku.id,
+                category,
+                animated: decorationUrl(item.asset, true),
+                static: decorationUrl(item.asset, false),
+                thumb: decorationUrl(item.asset, false, 96),
+            },
+        }
+    }
+    if (item.type === 2) {
+        return {
+            kind: 'nameplate',
+            entry: {
+                name: sku.name,
+                sku: sku.id,
+                category,
+                palette: item.palette || null,
+                video: `${CDN}/assets/collectibles/${item.asset}asset.webm`,
+                static: `${CDN}/assets/collectibles/${item.asset}static.png`,
+            },
+        }
+    }
+    return null // profile effects and the like
+}
+
+// walks the store from the mirror's SKUs: item -> its category -> every sibling in that category //
+async function crawlStore(config, seeds) {
+    let found = new Map()
+    let categories = new Set()
+    let add = (sku, category) => {
+        let e = storeEntry(sku, category)
+        if (e) found.set(sku.id, e)
+    }
+
+    console.log(`Looking up ${seeds.length} SKUs in the Discord store...`)
+    let checked = 0
+    for (let id of seeds) {
+        checked++
+        if (checked % 100 === 0) {
+            console.log(`  ${checked}/${seeds.length} seeds, ${categories.size} categories, ${found.size} items`)
+        }
+        if (found.has(id)) continue
+
+        let listing = await storeGet(config, id)
+        if (!listing || !listing.sku) continue
+        add(listing.sku, null)
+
+        let meta = listing.sku.tenant_metadata && listing.sku.tenant_metadata.collectibles
+        let categoryId = meta && meta.category_sku_id
+        if (categoryId && !categories.has(categoryId)) {
+            categories.add(categoryId)
+            let category = await storeGet(config, categoryId)
+            if (category) {
+                for (let child of category.child_skus || []) {
+                    add(child, category.sku.name)
+                }
+            }
+        }
+    }
+    console.log(`Store: ${categories.size} categories, ${found.size} decorations + nameplates.`)
+    return [...found.values()]
+}
+
+// store entries win over mirror ones; mirror-only items stay so nothing goes missing //
+function mergeStore(mirror, store, key) {
+    let byKey = new Map()
+    for (let item of mirror) byKey.set(key(item), { ...item, source: 'mirror' })
+    for (let item of store) byKey.set(key(item), { ...item, source: 'store' })
+    return [...byKey.values()]
+}
+
+async function buildCatalog(config, doDownload, limit, useStore) {
     console.log(`Reading mirror ${config.mirror.repo}...`)
     let paths = await fetchMirrorTree(config)
     let { repo, branch, root } = config.mirror
@@ -183,6 +288,16 @@ async function buildCatalog(config, doDownload, limit) {
         })
     }
 
+    if (useStore) {
+        let seeds = [...new Set([...decorations, ...nameplates].map(x => x.sku).filter(Boolean))]
+        let store = await crawlStore(config, limit ? seeds.slice(0, limit) : seeds)
+        let mirrorCount = decorations.length + nameplates.length
+        decorations = mergeStore(decorations, store.filter(s => s.kind === 'decoration').map(s => s.entry), d => d.asset)
+        // nameplate assets differ in form between the two sources, the sku is the stable key //
+        nameplates = mergeStore(nameplates, store.filter(s => s.kind === 'nameplate').map(s => s.entry), n => n.sku || n.name)
+        console.log(`Merged: ${decorations.length + nameplates.length - mirrorCount} items the mirror didn't have.`)
+    }
+
     decorations.sort((a, b) => a.name.localeCompare(b.name))
     nameplates.sort((a, b) => a.name.localeCompare(b.name))
     if (limit) {
@@ -200,14 +315,14 @@ async function buildCatalog(config, doDownload, limit) {
         })
         console.log('Downloading nameplates...')
         await pool(nameplates, 8, async n => {
-            let base = path.join('assets', 'nameplates', slug(n.name))
+            let base = path.join('assets', 'nameplates', slug(n.name) + (n.sku ? '-' + n.sku : ''))
             if (n.video) n.video = await download(n.video, base + '.webm')
             if (n.static) n.static = await download(n.static, base + '.png')
         })
     }
 
     writeJson('catalog.json', {
-        source: `https://github.com/${repo}`,
+        source: `https://github.com/${repo}` + (useStore ? ' + Discord store listings' : ''),
         syncedAt: new Date().toISOString(),
         local: doDownload,
         decorations,
@@ -322,15 +437,16 @@ async function main() {
     let config = loadConfig()
     let doDownload = flags.includes('--download') || config.download
     let limit = parseInt((flags.find(f => f.startsWith('--limit=')) || '').split('=')[1]) || 0
+    let useStore = config.store && !flags.includes('--no-store')
 
     if (command === 'catalog' || command === 'all') {
-        await buildCatalog(config, doDownload, limit)
+        await buildCatalog(config, doDownload, limit, useStore)
     }
     if (command === 'users' || command === 'all') {
         await syncUsers(config, rest.length ? rest : config.userIds)
     }
     if (!['catalog', 'users', 'all'].includes(command)) {
-        console.log('Usage: node scripts/discord-sync.mjs <catalog|users|all> [--download] [user ids...]')
+        console.log('Usage: node scripts/discord-sync.mjs <catalog|users|all> [--download] [--no-store] [user ids...]')
         process.exitCode = 1
     }
 }

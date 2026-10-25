@@ -8,5 +8,7 @@
         "branch": "main",
         "root": "discord_collectibles"
     },
-    "download": false
+    "download": false,
+    "store": true,
+    "storeDelayMs": 300
 }
