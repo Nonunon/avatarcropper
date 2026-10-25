@@ -368,20 +368,16 @@ body, .bigOverlay
     user-select none
     position absolute
     top 0
-    overflow auto
+    overflow hidden
     width 700px
     height 100%
     background transparent
 
-    canvas
-        z-index 1
-
-.cropView .image, .cropView canvas
-    position absolute
-    left 0
-    top 0
-    margin 0
-    padding 0
+    .cropCanvas
+        display block
+        width 100%
+        height 100%
+        touch-action none
 
 
 .zoomFit, .zoomIn, .zoomOut

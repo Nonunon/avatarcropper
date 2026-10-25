@@ -5,26 +5,6 @@ import { Point } from "./point";
 import { compose } from "./compose";
 import { settings, borderKeys } from "./state";
 
-// one shared animation loop: animated sources redraw every frame, static ones only on change //
-const animating = new Set<Preview>();
-let ticking = false;
-
-function tick(): void {
-    if (!animating.size) {
-        ticking = false;
-        return;
-    }
-    animating.forEach(preview => preview.draw());
-    requestAnimationFrame(tick);
-}
-
-function startTicking(): void {
-    if (!ticking) {
-        ticking = true;
-        requestAnimationFrame(tick);
-    }
-}
-
 // a live, true-size look at the crop, drawn by the same compositor the export uses //
 export class Preview extends Widget {
     private canvas: HTMLCanvasElement;
@@ -33,6 +13,7 @@ export class Preview extends Widget {
     private _size: Point;
     private cropView: CropView;
     private queued: boolean = false;
+    private removed: boolean = false;
 
     constructor(size: Point, cropView: CropView) {
         super(createElement("div", "preview"));
@@ -77,6 +58,8 @@ export class Preview extends Widget {
         cropView.on("update", () => this.queue());
         cropView.on("imagechange", () => this.queue());
         cropView.on("antialiaschange", () => this.queue());
+        // animations: the crop view plays them and says when a new frame is up //
+        cropView.on("frame", () => this.queue());
         settings.subscribe([...borderKeys, "previewMode"], () => this.queue());
 
         this.queue();
@@ -87,19 +70,11 @@ export class Preview extends Widget {
     }
 
     public destroy(): void {
-        animating.delete(this);
+        this.removed = true;
     }
 
     private queue(): void {
-        // animated sources are already redrawn every frame by the shared loop //
-        if (this.cropView.isAnimated && this.container.isConnected) {
-            animating.add(this);
-            startTicking();
-            return;
-        }
-        animating.delete(this);
-
-        if (!this.queued) {
+        if (!this.queued && !this.removed) {
             this.queued = true;
             requestAnimationFrame(() => {
                 this.queued = false;
@@ -110,14 +85,13 @@ export class Preview extends Widget {
 
     public draw(): void {
         if (!this.container.isConnected) {
-            animating.delete(this);
             return;
         }
         if (!this.cropView.hasImage) {
             this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
             return;
         }
-        compose(this.context, this.cropView.image, this.cropView.geometry, this.canvas.width, this.canvas.height, {
+        compose(this.context, this.cropView.source, this.cropView.geometry, this.canvas.width, this.canvas.height, {
             shape: settings.state.previewMode === "square" ? "square" : "circle",
             smooth: this.cropView.antialias,
         });

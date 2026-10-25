@@ -92,3 +92,80 @@ export async function openFrames(file: Blob, type: string): Promise<FrameSource 
         close: () => decoder.close(),
     };
 }
+
+// plays an animation into one canvas on its own clock, so the editor and every preview can draw
+// the current frame (a hidden <img> stops animating, so it can't be the source) //
+export class FramePlayer {
+    public readonly canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private index = -1;
+    private nextAt = 0;
+    private busy = false;
+    private running = false;
+    private closed = false;
+
+    private constructor(private decoder: any, private count: number, width: number, height: number, private onFrame: () => void) {
+        this.canvas = document.createElement("canvas");
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.ctx = this.canvas.getContext("2d");
+    }
+
+    public static async open(file: Blob, type: string, onFrame: () => void): Promise<FramePlayer | null> {
+        try {
+            let decoder = await openDecoder(file, type);
+            if (!decoder) {
+                return null;
+            }
+            await decoder.completed;
+            let first = (await decoder.decode({ frameIndex: 0 })).image;
+            let player = new FramePlayer(decoder, decoder.tracks.selectedTrack.frameCount, first.displayWidth, first.displayHeight, onFrame);
+            first.close();
+            await player.show(0, performance.now());
+            return player;
+        } catch {
+            return null;
+        }
+    }
+
+    private async show(i: number, now: number): Promise<void> {
+        this.busy = true;
+        let frame = (await this.decoder.decode({ frameIndex: i })).image;
+        if (this.closed) {
+            frame.close();
+            return;
+        }
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.drawImage(frame, 0, 0);
+        let ms = Math.round((frame.duration || 0) / 1000);
+        frame.close();
+        this.index = i;
+        // same as browsers: near-zero delays play at 100ms //
+        this.nextAt = now + (ms <= 10 ? 100 : ms);
+        this.busy = false;
+        this.onFrame();
+    }
+
+    public start(): void {
+        if (this.running || this.closed) return;
+        this.running = true;
+        let tick = (now: number) => {
+            if (!this.running) return;
+            if (!this.busy && now >= this.nextAt) {
+                this.show((this.index + 1) % this.count, now).catch(() => this.busy = false);
+            }
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    }
+
+    public stop(): void {
+        this.running = false;
+    }
+
+    public close(): void {
+        this.stop();
+        this.closed = true;
+        this.decoder.close();
+    }
+}

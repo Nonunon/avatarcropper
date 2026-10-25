@@ -1,107 +1,49 @@
-import { createElement, makePixelated } from "./util";
-import { Canvas } from "./canvas";
-import { settings } from "./state";
-import { Renderer } from "./renderer";
+import { Widget } from "./widget";
+import { createElement } from "./util";
 import { Point } from "./point";
-import { Rectangle, RectAnchor } from "./rectangle";
+import { Renderer } from "./renderer";
 import { KeyManager, Keys } from "./keymanager";
-import { Drawer } from "./drawer";
 import { showAlert } from "./nativedialogs";
-import { isAnimated, canDecodeFrames } from "./frames";
-import type { CropGeometry } from "./compose";
+import { settings } from "./state";
+import { isAnimated, canDecodeFrames, FramePlayer } from "./frames";
+import { bannerArea } from "./compose";
+import type { CropGeometry, Rect } from "./compose";
+import {
+    Crop, Bounds, Corner, defaultCrop, clampCrop, moveCrop, centerCrop, centerOf, hitTest, cornerAt,
+    cornerPoint, resizeFromCorner, resizeFromCenter, roundCrop, rotateCrop, rotatedBounds,
+} from "./crop";
 
-type MouseAction = "move" | "resize" | "new" | "none";
+type Drag =
+    | { mode: "move", start: { x: number, y: number }, crop: Crop }
+    | { mode: "resize", corner: Corner, offset: { x: number, y: number }, crop: Crop }
+    | { mode: "pan", client: { x: number, y: number }, pan: { x: number, y: number } };
 
-class Circle extends Rectangle {
-    private cropView: CropView;
-    private _origin: Rectangle;
-
-    constructor(cropView: CropView) {
-        super(new Point(), new Point());
-        this.cropView = cropView;
-        this.saveOrigin();
-    }
-
-    public get radius(): Point {
-        return this.size.dividedBy(2);
-    }
-
-    public set radius(radius: Point) {
-        this.size = radius.times(2);
-    }
-
-    public reset(): void {
-        this.position = new Point(0);
-        this.size = new Point(this.cropView.outerRect.size.min / 2);
-    }
-
-    public get rectangle(): Rectangle {
-        return this.copy();
-    }
-
-    public saveOrigin(): void {
-        this._origin = this.copy();
-    }
-
-    public get origin(): Rectangle {
-        return this._origin;
-    }
-
-    public validate(): number {
-        let ret = 0b00000000;
-
-        if (this.width > this.cropView.outerSize.x) {
-            this.setWidthKeepAR(this.cropView.outerSize.x);
-            ret |= 1;
-        }
-
-        if (this.height > this.cropView.outerSize.y) {
-            this.setHeightKeepAR(this.cropView.outerSize.y);
-            ret |= 2;
-        }
-
-        if (this.x < 0) {
-            this.x = 0;
-            ret |= 4;
-        }
-
-        if (this.y < 0) {
-            this.y = 0;
-            ret |= 8;
-        }
-
-        if (this.bottom > this.cropView.outerSize.y) {
-            this.bottom = this.cropView.outerSize.y;
-            ret |= 16;
-        }
-
-        if (this.right > this.cropView.outerSize.x) {
-            this.right = this.cropView.outerSize.x;
-            ret |= 32;
-        }
-
-        return ret;
-    }
-}
-
-export class CropView extends Drawer {
+// the editor: one canvas that draws the image, the mask and the guides, and turns pointer input
+// into crop changes. all crop math lives in crop.ts //
+export class CropView extends Widget {
     public readonly image: HTMLImageElement;
-    public readonly overlay: Canvas;
-    private _isZoomFitted: boolean = false;
-    private _zoomFactor: number = 1;
-    private currentRotation = 0;
+    private canvas: HTMLCanvasElement;
+    private ctx: CanvasRenderingContext2D;
+    private maskCanvas: HTMLCanvasElement;
+    private renderer: Renderer;
+    private player: FramePlayer | null = null;
+
     public currentFileType: string;
     public sourceFile: Blob;
     public sourceType: string;
-    public circle: Circle;
     private _filename: string;
-    private currentAction: MouseAction = "none";
-    private mouseOrigin: Point;
-    private resizeAnchor: Point;
-    private resizeOffset: Point;
-    private readonly renderer: Renderer;
-    private loadingImage: boolean = false;
-    private antialiased: boolean;
+
+    private crop: Crop = { x: 0, y: 0, size: 1 };
+    private currentRotation = 0;
+    private flipX = false;
+    private flipY = false;
+    private zoomFactor = 1;
+    private pan = { x: 0, y: 0 };
+    private fitted = true;
+    private drag: Drag | null = null;
+    private loadingImage = false;
+    private antialiased = true;
+    private drawQueued = false;
 
     constructor() {
         super(createElement("div", "cropView"));
@@ -109,82 +51,40 @@ export class CropView extends Drawer {
         this.createEvent("update");
         this.createEvent("imagechange");
         this.createEvent("antialiaschange");
+        this.createEvent("frame");
         this.createEvent("actionstart");
         this.createEvent("actionend");
 
-        this.circle = new Circle(this);
+        this.image = <HTMLImageElement>createElement("img");
+        this.canvas = <HTMLCanvasElement>createElement("canvas", "cropCanvas");
+        this.ctx = this.canvas.getContext("2d");
+        this.maskCanvas = document.createElement("canvas");
+        this.appendChild(this.canvas);
+
         this.renderer = new Renderer(this);
-
-        this.image = <HTMLImageElement>createElement("img", "image");
-        this.image.style.transformOrigin = "top left";
-
-        this.overlay = new Canvas({
-            deepCalc: true
-        });
-
-        this.appendChild(this.image, this.overlay.canvas);
-
         document.body.appendChild(this.renderer.container);
 
-        this.overlay.addEventListener("mousemove", this.mouseMove.bind(this));
-        this.overlay.addEventListener("mousedown", this.mouseDown.bind(this));
+        this.canvas.addEventListener("pointerdown", e => this.pointerDown(e));
+        this.canvas.addEventListener("pointermove", e => this.pointerMove(e));
+        this.canvas.addEventListener("pointerup", e => this.pointerUp(e));
+        this.canvas.addEventListener("pointercancel", e => this.pointerUp(e));
+        this.canvas.addEventListener("wheel", e => this.wheel(e), { passive: false });
+        this.canvas.addEventListener("auxclick", e => e.preventDefault());
 
-        this.overlay.canvas.addEventListener("touchmove", (e) => {
-            if (!(this.currentAction === "new" || this.currentAction === "none")) {
-                e.preventDefault();
+        // move the crop pixel by pixel with the arrow keys //
+        window.addEventListener("keydown", e => {
+            if (KeyManager.isArrowKey(e.keyCode) && this.hasImage) {
+                this.setCrop(moveCrop(this.crop, KeyManager.axis(Keys.right, Keys.left), KeyManager.axis(Keys.down, Keys.up), this.bounds));
             }
         });
 
-        document.body.addEventListener("mouseup", () => {
-            let ca = this.currentAction;
-            this.currentAction = "none";
-            if (ca !== "none") {
-                this.update("mouseup");
-                this.emitEvent("actionend");
-            }
-        });
-
-        document.body.addEventListener("touchend", () => {
-            let ca = this.currentAction;
-            this.currentAction = "none";
-            if (ca !== "none") {
-                this.update("touchend");
-                this.emitEvent("actionend");
-            }
-        });
-
-        // move circle around with arrow keys //
-        window.addEventListener("keydown", e => this.handleKeypress(e.keyCode));
-
-        this.antialias = settings.state.antialias;
+        new ResizeObserver(() => this.reactTMToRefresh()).observe(this.container);
 
         settings.subscribe(['maskOpacity', 'previewMode', 'outlinesEnabled', 'banneroutlinesEnabled', 'guidesEnabled'], () => this.update("settings"));
+        this.antialias = settings.state.antialias;
     }
 
-    private handleKeypress(key: number) {
-        if (KeyManager.isArrowKey(key)) {
-            this.circle.x += KeyManager.axis(Keys.right, Keys.left);
-            this.circle.y += KeyManager.axis(Keys.down, Keys.up);
-            this.circle.validate();
-            this.update("ketypress");
-        }
-    }
-
-    public get rotation(): number {
-        return this.currentRotation;
-    }
-
-    // a plain snapshot of everything the compositor needs //
-    public get geometry(): CropGeometry {
-        return {
-            imageWidth: this.image.width,
-            imageHeight: this.image.height,
-            outerWidth: this.overlay.width,
-            outerHeight: this.overlay.height,
-            rotation: this.currentRotation,
-            crop: { x: this.circle.x, y: this.circle.y, width: this.circle.width, height: this.circle.height },
-        };
-    }
+    // ---------- what everything else reads ---------- //
 
     public get hasImage(): boolean {
         return !!this.image.src && this.image.complete && this.image.naturalWidth > 0;
@@ -194,372 +94,39 @@ export class CropView extends Drawer {
         return this.currentFileType === "gif";
     }
 
-    public get cropArea(): Rectangle {
-        return this.circle.rectangle;
+    // the current picture: the playing frame for animations, the image otherwise //
+    public get source(): CanvasImageSource {
+        return this.player ? this.player.canvas : this.image;
     }
 
-    public get zoomFactor(): number {
-        return this._zoomFactor;
+    public get rotation(): number {
+        return this.currentRotation;
     }
 
-    public update(source: string) {
-        super.update(source);
-        this.emitEvent("update", source);
+    private get bounds(): Bounds {
+        return rotatedBounds(this.image.naturalWidth, this.image.naturalHeight, this.currentRotation);
     }
 
-    public reactTMToRefresh() {
-        this.isZoomFitted && this.zoomFit();
+    public get cropArea(): Rect {
+        return { x: this.crop.x, y: this.crop.y, width: this.crop.size, height: this.crop.size };
     }
 
-    protected draw(): void {
-        // draw mask //
-        if (settings.state.maskOpacity !== 1) {
-            this.overlay.clear();
-        }
-
-        if (settings.state.maskOpacity !== 0) {
-            this.overlay.fill("rgba(0,0,0," + settings.state.maskOpacity + ")");
-
-            this.overlay.blendMode = "destination-out";
-            if (settings.state.previewMode === "circle") {
-                this.overlay.fillCircleInRect(this.circle, "white");
-            }
-            else {
-                this.overlay.fillRect(this.circle, "white");
-            }
-            if (settings.state.banneroutlinesEnabled) {
-                this.overlay.fillRect(
-                    new Rectangle(new Point(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy - (this.circle.width * 1.5)), new Point(this.circle.width * 3.75, this.circle.width * 1.5)),
-                    "white"
-                )
-            }
-        }
-
-        this.overlay.blendMode = "source-over";
-        let lineWidth = ~~(1 / this.zoomFactor) + 1;
-
-        if (settings.state.outlinesEnabled) {
-            let sharp = lineWidth % 2 === 1;
-
-            this.overlay.lineDash = [Math.min(this.overlay.width, this.overlay.height) / 100];
-
-            if (settings.state.previewMode === "circle") {
-                this.overlay.drawCircleInRect(this.circle, "white", lineWidth);
-            }
-
-            this.overlay.drawRect(
-                new Rectangle(
-                    this.circle.position.minus(lineWidth),
-                    this.circle.size.plus(lineWidth)
-                ),
-                "white",
-                lineWidth,
-                sharp
-            );
-        }
-
-        if (settings.state.banneroutlinesEnabled) {
-            this.overlay.lineDash = [Math.min(this.overlay.width, this.overlay.height) / 100];
-
-
-            
-            
-        this.overlay.context.beginPath()
-        this.overlay.context.moveTo(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy)
-        this.overlay.context.lineTo(this.circle.left, this.circle.cy)
-        this.overlay.context.arc(this.circle.center.x, this.circle.center.y, this.circle.width / 2, Math.PI, 1.5 * Math.PI, false)
-        this.overlay.context.arc(this.circle.center.x, this.circle.center.y, this.circle.width / 2, 1.5 * Math.PI, 2 * Math.PI, false)
-        this.overlay.context.lineTo(this.circle.right + (this.circle.width * 2.4) + (this.circle.width / 13.33), this.circle.cy)
-        this.overlay.context.lineTo(this.circle.right + (this.circle.width * 2.4) + (this.circle.width / 13.33), this.circle.cy - (this.circle.width * 1.5))
-        this.overlay.context.lineTo(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy - (this.circle.width * 1.5))
-        this.overlay.context.lineTo(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy)
-        this.overlay.context.lineWidth = lineWidth
-        this.overlay.context.strokeStyle = "yellow"
-        this.overlay.context.stroke()
-
-        this.overlay.context.beginPath()
-        this.overlay.context.moveTo(this.circle.left - (this.circle.width / 13.33), this.circle.cy)
-        this.overlay.context.arc(this.circle.center.x, this.circle.center.y, this.circle.width / 2 + (this.circle.width / 13.33), Math.PI, 1.5 * Math.PI, false)
-        this.overlay.context.arc(this.circle.center.x, this.circle.center.y, this.circle.width / 2 + (this.circle.width / 13.33), 1.5 * Math.PI, 2 * Math.PI, false)
-        this.overlay.context.strokeStyle = "red"
-        this.overlay.context.stroke()
-        }
-
-        if (settings.state.guidesEnabled) {
-            this.overlay.context.lineDashOffset = this.overlay.context.getLineDash()[0];
-            this.overlay.drawLine(this.circle.center, new Point(this.circle.cx, this.circle.bottom), "yellow", lineWidth);
-            this.overlay.drawLine(this.circle.center, new Point(this.circle.cx, this.circle.top), "yellow", lineWidth);
-            this.overlay.drawLine(this.circle.center, new Point(this.circle.right, this.circle.cy), "yellow", lineWidth);
-            this.overlay.drawLine(this.circle.center, new Point(this.circle.left, this.circle.cy), "yellow", lineWidth);
-            this.overlay.context.lineDashOffset = 0;
-        }
-
+    public get innerSize(): Point {
+        return new Point(this.image.naturalWidth, this.image.naturalHeight);
     }
 
-    // returns size of image (internal res of image) //
-    public get innerRect(): Rectangle {
-        return new Rectangle(new Point(0), this.innerSize);
-    }
-
-    public get innerSize() : Point {
-        return new Point(this.image.width, this.image.height);
-    }
-
-    // returns sizes taking rotation into consideration (internal res of overlay) //
-    public get outerRect(): Rectangle {
-        return new Rectangle(new Point(0), this.outerSize);
-    }
-
-    public get outerSize() : Point {
-        return new Point(this.overlay.width, this.overlay.height);
-    }
-
-    public get apparentSize() : Point {
-        return Point.fromSizeLike(this.container.getBoundingClientRect());
-    }
-
-    private get isZoomFitted(): boolean {
-        return this._isZoomFitted;
-    }
-
-    private set isZoomFitted(z: boolean) {
-        this._isZoomFitted = z;
-
-        if (z) {
-            this.container.style.overflow = "hidden";
-        }
-        else {
-            this.container.style.overflow = "";
-        }
-    }
-
-    public zoom(factor?: number, shouldUpdate: boolean = true): void {
-        let ogScrollTopP = this.container.scrollTop / this.container.scrollHeight;
-        let ogScrollLeftP = this.container.scrollLeft / this.container.scrollWidth;
-
-        this.container.scrollTop = 0;
-        this.container.scrollLeft = 0;
-        let rotatePart = "";
-
-        if (this.image.style.transform.indexOf(" rotate") !== -1) {
-            rotatePart = this.image.style.transform.substr(
-                this.image.style.transform.indexOf(" rotate")
-            );
-        }
-
-        factor = factor || this.zoomFactor;
-        this._zoomFactor = factor;
-        this.overlay.zoom(factor);
-        this.image.style.transform = "scale(" + factor + "," + factor + ")";
-
-        this.image.style.transform += rotatePart;
-
-        let r = this.image.getBoundingClientRect();
-
-        if (r.left !== 0) {
-            let current = parseFloat(this.image.style.left || "0px");
-            current -= r.left;
-
-            this.image.style.left = current + "px";
-        }
-
-        if (r.top !== 0) {
-            let current = parseFloat(this.image.style.top || "0px");
-            current -= r.top;
-
-            this.image.style.top = current + "px";
-        }
-
-        shouldUpdate && this.update("zoom");
-
-        this.container.scrollTop = ogScrollTopP * this.container.scrollHeight;
-        this.container.scrollLeft = ogScrollLeftP * this.container.scrollWidth;
-    }
-
-    public zoomIn(): void {
-        this.isZoomFitted = false;
-        this.zoom(this.zoomFactor * 1.1);
-    }
-
-    public zoomOut(): void {
-        this.isZoomFitted = false;
-        this.zoom(this.zoomFactor / 1.1);
-    }
-
-    public zoomFit(force: boolean = true, shouldUpdate: boolean = true): void {
-        if (!this.image) {
-            return;
-        }
-
-        if (!this.isZoomFitted && !force) {
-            return;
-        }
-
-        this.isZoomFitted = true;
-
-
-        var cr = this.container.getBoundingClientRect();
-        var ir = { width: this.overlay.width, height: this.overlay.height };
-
-        var fw = cr.width / ir.width;
-        var fh = cr.height / ir.height;
-        var f = Math.min(fw, fh);
-
-
-        this.zoom(f, shouldUpdate);
-    }
-
-    public rotate(deg?: number, shouldUpdate: boolean = true): void {
-        if (deg === undefined) deg = this.currentRotation;
-
-        this.currentRotation = deg;
-
-        if (this.image.style.transform.indexOf(" rotate") !== -1) {
-            this.image.style.transform = this.image.style.transform.substr(
-                0,
-                this.image.style.transform.indexOf(" rotate")
-            );
-        }
-
-        let b4 = this.image.style.transform;
-
-        this.image.style.left = "0px";
-        this.image.style.top = "0px";
-
-        let size = Point.fromSizeLike(this.image);
-
-        let or = Point.fromSizeLike(this.image.getBoundingClientRect());
-
-        this.image.style.transform = b4 + " rotate(" + deg + "deg)";
-
-        let r = Rectangle.fromClientRect(this.image.getBoundingClientRect());
-        let delta = r.topLeft.inverted.minus(new Point(this.container.scrollLeft, this.container.scrollTop));
-
-        this.image.style.left = delta.x + "px";
-        this.image.style.top = delta.y + "px";
-
-        size.multiply(r.size.dividedBy(or));
-        this.overlay.resize(size, false);
-
-
-        this.zoomFit(false, shouldUpdate);
-        this.circle.validate();
-        shouldUpdate && this.update("rotate");
-    }
-
-    public set antialias(antialias: boolean) {
-        makePixelated(this.image, !antialias);
-        this.overlay.pixelated = !antialias;
-
-        this.antialiased = antialias;
-        this.emitEvent("antialiaschange", this.antialiased);
-    }
-
-    public get antialias(): boolean {
-        return this.antialiased;
-    }
-
-    public setImageFromFile(file: File): boolean {
-        // some sources hand over files with no mime type, so fall back to the extension //
-        let ext = file ? file.name.split('.').pop().toLowerCase() : "";
-        let looksLikeImage = file && (file.type.startsWith("image/") || (!file.type && /^(png|jpe?g|jfif|gif|webp|avif|bmp|ico|svg|apng)$/.test(ext)));
-        if (!looksLikeImage || this.loadingImage) {
-            return false;
-        }
-
-        let types: { [ext: string]: string } = { gif: "image/gif", webp: "image/webp", png: "image/png", apng: "image/apng", avif: "image/avif" };
-        this.sourceFile = file;
-        this.sourceType = file.type || types[ext] || "";
-
-        this.loadingImage = true;
-
-        // anything animated (gif, webp, apng, avif) is cropped frame by frame and saved as a gif //
-        let animatedCheck = this.sourceType === "image/gif" && !canDecodeFrames()
-            ? Promise.resolve(true)
-            : isAnimated(file, this.sourceType);
-
-        animatedCheck.then(animated => {
-            this.currentFileType = animated ? "gif" : "png";
-            let base = file.name.lastIndexOf('.') > 0 ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
-            this._filename = base + "_cropped." + this.currentFileType;
-
-            Canvas.fileToImage(file, this.setImageFromFileHelper.bind(this), false, () => {
-                // without this a file the browser can't decode left loadingImage stuck and blocked every later open //
-                this.loadingImage = false;
-                showAlert("Couldn't open " + file.name + ", your browser can't read that image format.");
-            });
-        });
-        return true;
-    }
-
-    private setImageFromFileHelper(image: HTMLImageElement) {
-        if (this.image.src) {
-            URL.revokeObjectURL(this.image.src);
-        }
-
-        this.overlay.resize(Point.fromSizeLike(image), false);
-        this.overlay.clear();
-
-        this.image.width = image.width;
-        this.image.height = image.height;
-        this.image.src = image.src;
-
-        this.circle.reset();
-        this.zoomFit(true, false);
-        this.rotate(0, false);
-
-        this.emitEvent("imagechange", this.image.src);
-        this.update("image change");
-        this.loadingImage = false;
-    }
-
-    public flipHorizontal(): void {
-        let c = new Canvas({ size: Point.fromSizeLike(this.image) });
-        c.context.scale(-1, 1);
-        c.drawImage(this.image, new Rectangle(new Point(0), Point.fromSizeLike(this.image).times(new Point(-1, 1))));
-        c.context.setTransform(1, 0, 0, 1, 0, 0);
-
-        this.loadingImage = true;
-        c.createImage((img) => {
-            this.flipHelper(img, true);
-        }, undefined, false);
-    }
-
-    public flipVertical(): void {
-        let c = new Canvas({ size: Point.fromSizeLike(this.image) });
-        c.context.scale(1, -1);
-        c.drawImage(this.image, new Rectangle(new Point(0), Point.fromSizeLike(this.image).times(new Point(1, -1))));
-        c.context.setTransform(1, 0, 0, 1, 0, 0);
-
-        this.loadingImage = true;
-        c.createImage((img: HTMLImageElement) => {
-            this.flipHelper(img, false);
-        }, undefined, false);
-    }
-
-    private flipHelper(image: HTMLImageElement, horizontal: boolean): void {
-        if (this.image.src) {
-            URL.revokeObjectURL(this.image.src);
-        }
-
-        this.image.onload = () => {
-            this.rotate(-this.rotation, false);
-            if (horizontal) {
-                this.circle.cx = this.outerSize.x - this.circle.cx;
-            }
-            else {
-                this.circle.cy = this.outerSize.y - this.circle.cy;
-            }
-            this.emitEvent("imagechange", this.image.src);
-            this.update("flippy");
-            this.loadingImage = false;
+    public get geometry(): CropGeometry {
+        let b = this.bounds;
+        return {
+            imageWidth: this.image.naturalWidth,
+            imageHeight: this.image.naturalHeight,
+            outerWidth: b.width,
+            outerHeight: b.height,
+            rotation: this.currentRotation,
+            flipX: this.flipX,
+            flipY: this.flipY,
+            crop: this.cropArea,
         };
-
-        this.image.src = image.src;
-    }
-
-    public renderCroppedImage(): void {
-        this.renderer.render();
     }
 
     public get filename(): string {
@@ -570,121 +137,394 @@ export class CropView extends Drawer {
         return this.image.src || null;
     }
 
+    public set antialias(antialias: boolean) {
+        this.antialiased = antialias;
+        this.emitEvent("antialiaschange", antialias);
+        this.update("antialias");
+    }
+
+    public get antialias(): boolean {
+        return this.antialiased;
+    }
+
+    // ---------- changes ---------- //
+
+    public update(source: string = ""): void {
+        this.requestDraw();
+        this.emitEvent("update", source);
+    }
+
+    private setCrop(crop: Crop): void {
+        this.crop = crop;
+        this.update("crop");
+    }
+
     public centerCropArea(): void {
-        this.circle.center = this.outerRect.center;
-        this.circle.validate();
-        this.update("center crop");
+        this.setCrop(roundCrop(centerCrop(this.crop, this.bounds)));
     }
 
     public setCropSize(size: number): void {
-        this.circle.size = new Point(size);
-        this.circle.validate();
-        this.update("set crop size");
+        let center = centerOf(this.crop);
+        this.setCrop(roundCrop(clampCrop({ x: center.x - size / 2, y: center.y - size / 2, size }, this.bounds), true));
     }
 
-    private getMouseAction(x: number, y: number): MouseAction {
-        if (this.circle.containsPoint(new Point(x, y))) {
-
-            let grabbingHandle = this.circle.center.distanceTo(new Point(x, y)) >= this.circle.radius.x;
-
-            return grabbingHandle ? "resize" : "move";
-        }
-        else {
-            return "new";
-        }
+    public rotate(deg: number = this.currentRotation): void {
+        let from = this.bounds;
+        let delta = deg - this.currentRotation;
+        this.currentRotation = deg;
+        this.crop = roundCrop(rotateCrop(this.crop, from, this.bounds, delta), true);
+        this.refit();
+        this.update("rotate");
     }
 
-    private mouseDown(x: number, y: number): void {
-        var action = this.getMouseAction(x, y);
-        this.currentAction = action;
-
-        if (this.currentAction !== "none") {
-            this.emitEvent("actionstart");
-        }
-
-        this.mouseOrigin = new Point(x, y);
-        this.circle.saveOrigin();
-
-        this.resizeOffset = this.circle.getPointFromAnchor(this.getCircleAnchor(this.mouseOrigin)).minus(this.mouseOrigin);
+    // flipping the view is a mirror of everything on screen: the image flips, the rotation runs the
+    // other way, and the crop lands on the mirrored spot //
+    public flipHorizontal(): void {
+        this.flipX = !this.flipX;
+        this.mirror(true);
     }
 
-    private mouseMove(x: number, y: number): void {
-        // determine what cursor to show //
-        let action = this.currentAction;
-        if (action === "none") {
-            action = this.getMouseAction(x, y);
-        }
+    public flipVertical(): void {
+        this.flipY = !this.flipY;
+        this.mirror(false);
+    }
 
-        if (action === "move") {
-            this.overlay.canvas.style.cursor = "move";
-        }
-        else if (action === "resize") {
-            let xr = x < this.circle.cx;
-            let yr = y < this.circle.cy;
-            let thing = +xr ^ +yr; // nice
-            this.overlay.canvas.style.cursor = thing ? "nesw-resize" : "nwse-resize";
-        }
-        else {
-            this.overlay.canvas.style.cursor = "default";
-        }
+    private mirror(horizontal: boolean): void {
+        let b = this.bounds;
+        this.currentRotation = -this.currentRotation;
+        let mirrored = horizontal
+            ? { x: b.width - this.crop.x - this.crop.size, y: this.crop.y, size: this.crop.size }
+            : { x: this.crop.x, y: b.height - this.crop.y - this.crop.size, size: this.crop.size };
+        this.crop = roundCrop(clampCrop(mirrored, b));
+        this.update("flip");
+    }
 
-        // actually do stuff //
-        if (this.currentAction === "none") {
+    public renderCroppedImage(): void {
+        this.renderer.render();
+    }
+
+    // ---------- zoom and pan ---------- //
+
+    public zoomIn(): void {
+        let r = this.canvas.getBoundingClientRect();
+        this.zoomAt(1.1, r.width / 2, r.height / 2);
+    }
+
+    public zoomOut(): void {
+        let r = this.canvas.getBoundingClientRect();
+        this.zoomAt(1 / 1.1, r.width / 2, r.height / 2);
+    }
+
+    // zooms by `factor`, keeping the point under (sx, sy) where it is //
+    private zoomAt(factor: number, sx: number, sy: number): void {
+        let next = Math.min(Math.max(this.zoomFactor * factor, 0.02), 64);
+        let ox = (sx - this.pan.x) / this.zoomFactor, oy = (sy - this.pan.y) / this.zoomFactor;
+        this.zoomFactor = next;
+        this.pan = { x: sx - ox * next, y: sy - oy * next };
+        this.fitted = false;
+        this.update("zoom");
+    }
+
+    public zoomFit(): void {
+        this.fitted = true;
+        this.refit();
+        this.update("zoom");
+    }
+
+    private refit(): void {
+        if (!this.fitted || !this.hasImage) {
             return;
         }
-        else if (this.currentAction === "move") {
-            let d = new Point(x, y).minus(this.mouseOrigin);
-            this.circle.position = this.circle.origin.position.plus(d);
-            this.circle.validate();
-            this.mouseOrigin = new Point(x, y);
-            this.circle.saveOrigin();
-        }
-        else if (this.currentAction === "resize") {
-            this.performResize(x, y);
-        }
-
-        this.circle.round(settings.state.resizeLock); // u rite
-        this.update("mouse move");
+        let r = this.container.getBoundingClientRect();
+        let b = this.bounds;
+        this.zoomFactor = Math.min(r.width / b.width, r.height / b.height) || 1;
+        this.pan = { x: 0, y: 0 };
     }
 
-    private getCircleAnchor(p: Point): RectAnchor {
-        let x = p.x;
-        let y = p.y;
+    // called when the window or layout changes size //
+    public reactTMToRefresh(): void {
+        this.refit();
+        this.requestDraw();
+    }
 
-        if (x > this.circle.cx) {
-            if (y > this.circle.cy) {
-                return "se";
-            }
-            else {
-                return "ne";
-            }
+    // ---------- pointer input ---------- //
+
+    private toOuter(e: MouseEvent): { x: number, y: number } {
+        let r = this.canvas.getBoundingClientRect();
+        return { x: (e.clientX - r.left - this.pan.x) / this.zoomFactor, y: (e.clientY - r.top - this.pan.y) / this.zoomFactor };
+    }
+
+    private pointerDown(e: PointerEvent): void {
+        if (!this.hasImage || (e.button !== 0 && e.button !== 1)) {
+            return;
         }
-        else {
-            if (y > this.circle.cy) {
-                return "sw";
-            }
-            else {
-                return "nw";
-            }
+        e.preventDefault();
+        let p = this.toOuter(e);
+        let hit = e.button === 1 ? "none" : hitTest(this.crop, p.x, p.y);
+
+        if (hit === "move") {
+            this.drag = { mode: "move", start: p, crop: this.crop };
+        } else if (hit === "resize") {
+            let corner = cornerAt(this.crop, p.x, p.y);
+            let point = cornerPoint(this.crop, corner);
+            this.drag = { mode: "resize", corner, offset: { x: point.x - p.x, y: point.y - p.y }, crop: this.crop };
+        } else {
+            // dragging outside the crop (or with the middle button) pans the view //
+            this.drag = { mode: "pan", client: { x: e.clientX, y: e.clientY }, pan: { ...this.pan } };
+            this.canvas.style.cursor = "grabbing";
+        }
+
+        try {
+            this.canvas.setPointerCapture(e.pointerId);
+        } catch {
+            // synthetic or already-ended pointers can't be captured; the drag still works //
+        }
+        this.emitEvent("actionstart");
+    }
+
+    private pointerMove(e: PointerEvent): void {
+        if (!this.hasImage) {
+            return;
+        }
+        let p = this.toOuter(e);
+
+        if (!this.drag) {
+            let hit = hitTest(this.crop, p.x, p.y);
+            let corner = cornerAt(this.crop, p.x, p.y);
+            this.canvas.style.cursor = hit === "move" ? "move"
+                : hit === "resize" ? (corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize")
+                : "grab";
+            return;
+        }
+
+        let lock = settings.state.resizeLock;
+        let drag = this.drag;
+        if (drag.mode === "move") {
+            this.setCrop(roundCrop(moveCrop(drag.crop, p.x - drag.start.x, p.y - drag.start.y, this.bounds)));
+        } else if (drag.mode === "resize") {
+            let x = p.x + drag.offset.x, y = p.y + drag.offset.y;
+            let next = lock ? resizeFromCenter(drag.crop, x, y, this.bounds) : resizeFromCorner(drag.crop, drag.corner, x, y, this.bounds);
+            this.setCrop(roundCrop(next, lock));
+        } else {
+            this.pan = { x: drag.pan.x + e.clientX - drag.client.x, y: drag.pan.y + e.clientY - drag.client.y };
+            this.fitted = false;
+            this.requestDraw();
         }
     }
 
-    private performResize(x: number, y: number) {
-        let anchor = Rectangle.anchorOpposite(this.getCircleAnchor(new Point(x, y)));
+    private pointerUp(e: PointerEvent): void {
+        if (!this.drag) {
+            return;
+        }
+        this.drag = null;
+        this.canvas.hasPointerCapture(e.pointerId) && this.canvas.releasePointerCapture(e.pointerId);
+        this.pointerMove(e);
+        this.emitEvent("actionend");
+    }
 
-        if (!settings.state.resizeLock) {
-            this.resizeAnchor = this.circle.getPointFromAnchor(anchor).minus(this.resizeOffset);
-            let r = Rectangle.between(new Point(x, y), this.resizeAnchor);
-            //r.round();
-            this.circle.fitInsideGreedy(r, anchor, this.outerRect);
-            this.circle.validate();
+    private wheel(e: WheelEvent): void {
+        if (!this.hasImage) {
+            return;
         }
-        else {
-            let r = Rectangle.between(new Point(x, y).plus(this.resizeOffset), this.circle.center);
-            r.expandToward(anchor, 2);
-            //r.round();
-            this.circle.fitInsideGreedyCenter(r, this.outerRect);
-            this.circle.validate();
+        e.preventDefault();
+        let r = this.canvas.getBoundingClientRect();
+        this.zoomAt(Math.pow(1.0015, -e.deltaY), e.clientX - r.left, e.clientY - r.top);
+    }
+
+    // ---------- loading ---------- //
+
+    public setImageFromFile(file: File): boolean {
+        // some sources hand over files with no mime type, so fall back to the extension //
+        let ext = file ? file.name.split('.').pop().toLowerCase() : "";
+        let looksLikeImage = file && (file.type.startsWith("image/") || (!file.type && /^(png|jpe?g|jfif|gif|webp|avif|bmp|ico|svg|apng)$/.test(ext)));
+        if (!looksLikeImage || this.loadingImage) {
+            return false;
         }
+
+        let types: { [ext: string]: string } = { gif: "image/gif", webp: "image/webp", png: "image/png", apng: "image/apng", avif: "image/avif" };
+        let type = file.type || types[ext] || "";
+        this.loadingImage = true;
+
+        // anything animated (gif, webp, apng, avif) is cropped frame by frame //
+        let animatedCheck = type === "image/gif" && !canDecodeFrames() ? Promise.resolve(true) : isAnimated(file, type);
+
+        animatedCheck.then(async animated => {
+            let url = URL.createObjectURL(file);
+            let img = new Image();
+            try {
+                img.src = url;
+                await img.decode();
+            } catch {
+                URL.revokeObjectURL(url);
+                this.loadingImage = false;
+                showAlert("Couldn't open " + file.name + ", your browser can't read that image format.");
+                return;
+            }
+
+            let player = animated ? await FramePlayer.open(file, type, () => this.frame()) : null;
+
+            if (this.image.src) {
+                URL.revokeObjectURL(this.image.src);
+            }
+            this.player && this.player.close();
+
+            this.sourceFile = file;
+            this.sourceType = type;
+            this.currentFileType = animated ? "gif" : "png";
+            let base = file.name.lastIndexOf('.') > 0 ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
+            this._filename = base + "_cropped." + this.currentFileType;
+
+            this.image.src = url;
+            await this.image.decode().catch(() => { });
+            this.player = player;
+            this.currentRotation = 0;
+            this.flipX = this.flipY = false;
+            this.crop = roundCrop(defaultCrop(this.bounds));
+            this.fitted = true;
+            this.refit();
+            player && player.start();
+
+            this.loadingImage = false;
+            this.emitEvent("imagechange", url);
+            this.update("image change");
+        });
+        return true;
+    }
+
+    // a new animation frame: redraw here and let the previews know //
+    private frame(): void {
+        this.requestDraw();
+        this.emitEvent("frame");
+    }
+
+    // ---------- drawing ---------- //
+
+    private requestDraw(): void {
+        if (this.drawQueued) {
+            return;
+        }
+        this.drawQueued = true;
+        requestAnimationFrame(() => {
+            this.drawQueued = false;
+            this.draw();
+        });
+    }
+
+    private draw(): void {
+        let dpr = window.devicePixelRatio || 1;
+        let r = this.container.getBoundingClientRect();
+        let w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+        if (this.canvas.width !== w || this.canvas.height !== h) {
+            this.canvas.width = this.maskCanvas.width = w;
+            this.canvas.height = this.maskCanvas.height = h;
+        }
+
+        let ctx = this.ctx;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        if (!this.hasImage) {
+            return;
+        }
+
+        let s = settings.state;
+        let geo = this.geometry;
+        let z = this.zoomFactor;
+        let view = (c: CanvasRenderingContext2D) => c.setTransform(dpr * z, 0, 0, dpr * z, dpr * this.pan.x, dpr * this.pan.y);
+
+        // the image //
+        view(ctx);
+        ctx.imageSmoothingEnabled = this.antialiased;
+        ctx.save();
+        ctx.translate(geo.outerWidth / 2, geo.outerHeight / 2);
+        ctx.rotate(geo.rotation / 180 * Math.PI);
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.drawImage(this.source, -geo.imageWidth / 2, -geo.imageHeight / 2, geo.imageWidth, geo.imageHeight);
+        ctx.restore();
+
+        let c = this.crop;
+        let center = centerOf(c);
+        let circle = s.previewMode !== "square";
+
+        // the mask darkens everything outside the crop (and the banner, when it's on) //
+        if (s.maskOpacity > 0) {
+            let m = this.maskCanvas.getContext("2d");
+            m.setTransform(1, 0, 0, 1, 0, 0);
+            m.clearRect(0, 0, w, h);
+            view(m);
+            m.fillStyle = "rgba(0,0,0," + s.maskOpacity + ")";
+            m.fillRect(0, 0, geo.outerWidth, geo.outerHeight);
+            m.globalCompositeOperation = "destination-out";
+            // the cut-out has to be fully opaque or it only removes part of the mask //
+            m.fillStyle = "#000";
+            m.beginPath();
+            if (circle) {
+                m.arc(center.x, center.y, c.size / 2, 0, Math.PI * 2);
+            } else {
+                m.rect(c.x, c.y, c.size, c.size);
+            }
+            m.fill();
+            if (s.banneroutlinesEnabled) {
+                let b = bannerArea(geo.crop);
+                m.fillRect(b.x, b.y, b.width, b.height);
+            }
+            m.globalCompositeOperation = "source-over";
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(this.maskCanvas, 0, 0);
+            view(ctx);
+        }
+
+        // lines are sized in screen pixels, whatever the zoom //
+        let line = 1.5 / z;
+        let dash = [6 / z];
+        ctx.lineWidth = line;
+
+        if (s.outlinesEnabled) {
+            ctx.setLineDash(dash);
+            ctx.strokeStyle = "white";
+            if (circle) {
+                ctx.beginPath();
+                ctx.arc(center.x, center.y, c.size / 2, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.strokeRect(c.x - line / 2, c.y - line / 2, c.size + line, c.size + line);
+        }
+
+        if (s.banneroutlinesEnabled) {
+            // Discord's profile layout: the banner above, with the avatar cut into its bottom-left //
+            let left = c.x - (c.size / 5 + c.size / 13.33);
+            let right = c.x + c.size + c.size * 2.4 + c.size / 13.33;
+            let top = center.y - c.size * 1.5;
+            ctx.setLineDash(dash);
+            ctx.beginPath();
+            ctx.moveTo(left, center.y);
+            ctx.lineTo(c.x, center.y);
+            ctx.arc(center.x, center.y, c.size / 2, Math.PI, 2 * Math.PI, false);
+            ctx.lineTo(right, center.y);
+            ctx.lineTo(right, top);
+            ctx.lineTo(left, top);
+            ctx.lineTo(left, center.y);
+            ctx.strokeStyle = "yellow";
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, c.size / 2 + c.size / 13.33, Math.PI, 2 * Math.PI, false);
+            ctx.strokeStyle = "red";
+            ctx.stroke();
+        }
+
+        if (s.guidesEnabled) {
+            ctx.setLineDash(dash);
+            ctx.lineDashOffset = dash[0];
+            ctx.strokeStyle = "yellow";
+            ctx.beginPath();
+            ctx.moveTo(center.x, c.y);
+            ctx.lineTo(center.x, c.y + c.size);
+            ctx.moveTo(c.x, center.y);
+            ctx.lineTo(c.x + c.size, center.y);
+            ctx.stroke();
+            ctx.lineDashOffset = 0;
+        }
+
+        ctx.setLineDash([]);
     }
 }

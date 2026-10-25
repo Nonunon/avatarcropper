@@ -20,6 +20,8 @@ export interface CropGeometry {
     outerWidth: number;
     outerHeight: number;
     rotation: number; // degrees
+    flipX?: boolean;
+    flipY?: boolean;
     crop: Rect;
 }
 
@@ -50,6 +52,7 @@ export function drawArea(
     ctx.scale(width / area.width, height / area.height);
     ctx.translate(-area.x + geo.outerWidth / 2, -area.y + geo.outerHeight / 2);
     ctx.rotate(geo.rotation / 180 * Math.PI);
+    ctx.scale(geo.flipX ? -1 : 1, geo.flipY ? -1 : 1);
     ctx.drawImage(source, -geo.imageWidth / 2, -geo.imageHeight / 2, geo.imageWidth, geo.imageHeight);
     ctx.restore();
 }
