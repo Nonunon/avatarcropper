@@ -1,5 +1,4 @@
 import { Dialog } from "./dialog";
-import { emptyFn } from "./util";
 
 export abstract class InputDialog<T> extends Dialog {
     constructor(onreturn?: (input: T) => void) {

@@ -1,4 +1,3 @@
-import { Widget } from "./widget";
 import { createElement, makePixelated } from "./util";
 import { Canvas } from "./canvas";
 import { settings } from "./state";
@@ -113,9 +112,6 @@ export class CropView extends Drawer {
         this.createEvent("actionstart");
         this.createEvent("actionend");
 
-        //this.on("update", this.renderOverlay.bind(this));
-        //this.once("update", () => console.log("sup"));
-
         this.circle = new Circle(this);
         this.renderer = new Renderer(this);
 
@@ -160,7 +156,6 @@ export class CropView extends Drawer {
         // move circle around with arrow keys //
         window.addEventListener("keydown", e => this.handleKeypress(e.keyCode));
 
-        //this.overlay.mouse.addEventListener("leave", this.overlay.mouse.events.up[0]);
         this.antialias = settings.state.antialias;
 
         settings.subscribe(['maskOpacity', 'previewMode', 'outlinesEnabled', 'banneroutlinesEnabled', 'guidesEnabled'], () => this.update("settings"));
@@ -168,7 +163,6 @@ export class CropView extends Drawer {
 
     private handleKeypress(key: number) {
         if (KeyManager.isArrowKey(key)) {
-            //console.log( KeyManager.axis(Keys.right, Keys.left))
             this.circle.x += KeyManager.axis(Keys.right, Keys.left);
             this.circle.y += KeyManager.axis(Keys.down, Keys.up);
             this.circle.validate();
@@ -218,7 +212,6 @@ export class CropView extends Drawer {
     }
 
     protected draw(): void {
-        //console.log("rendering overlay");
         // draw mask //
         if (settings.state.maskOpacity !== 1) {
             this.overlay.clear();
@@ -266,20 +259,9 @@ export class CropView extends Drawer {
         }
 
         if (settings.state.banneroutlinesEnabled) {
-            let sharp = lineWidth % 2 === 1;
-
             this.overlay.lineDash = [Math.min(this.overlay.width, this.overlay.height) / 100];
 
-/*             if (settings.state.previewMode === "circle") {
-                this.overlay.drawCircleInRect(this.circle, "red", lineWidth);
-            } */
 
-/*             this.overlay.drawRect(
-                new Rectangle(new Point(this.circle.left - (this.circle.width / 5 + this.circle.width / 13.33), this.circle.cy - (this.circle.width * 1.5)), new Point(this.circle.width * 3.75, this.circle.width * 1.5)),
-                "#ff00ff",
-                lineWidth,
-                sharp
-            ); */
             
             
         this.overlay.context.beginPath()
@@ -312,39 +294,6 @@ export class CropView extends Drawer {
             this.overlay.context.lineDashOffset = 0;
         }
 
-        /*let theta = (90 - this.rotation) / 180 * Math.PI;
-        let cot = (t) => 1 / Math.tan(t);
-        
-        let cx = this.outerSize.x / 2;
-        let cy = this.outerSize.y / 2;
-        
-        let circleX = this.circle.cx;
-        let circleY = this.circle.cy;
-
-        let xc = circleX - cx;
-        let yc = cy - circleY;
-
-        //console.log(cx, cy, circleX, circleY, dx, dy);
-
-        (<any>window).z = theta;
-
-        let f = (x) => Math.tan(theta) * x;
-        let fp = (x) => -cot(theta) * x;
-        let yy = yc - fp(xc);
-        let fpc = (x) => -cot(theta) * x + yc + cot(theta) * xc;
-        let ix = yy / (Math.tan(theta) + cot(theta));
-        let iy = fpc(ix);
-
-        console.log(xc, yc);
-
-        this.overlay.drawLine(cx, cy, cx + 500, cy - f(500), "red", 2);
-        this.overlay.drawLine(cx, cy, cx - 500, cy - f(-500), "red", 2);
-
-        this.overlay.drawLine(cx, cy, cx + 500, cy - fp(500), "red", 2);
-        this.overlay.drawLine(cx, cy, cx - 500, cy - fp(-500), "red", 2);
-
-        this.overlay.drawLine(circleX, circleY, circleX, circleY + yy, "green", 2);
-        this.overlay.drawLine(circleX, circleY, cx + ix, cy - iy, "blue", 2);*/
     }
 
     // returns size of image (internal res of image) //
@@ -424,7 +373,7 @@ export class CropView extends Drawer {
         shouldUpdate && this.update("zoom");
 
         this.container.scrollTop = ogScrollTopP * this.container.scrollHeight;
-        this.container.scrollLeft = ogScrollTopP * this.contentContainer.scrollWidth;
+        this.container.scrollLeft = ogScrollLeftP * this.container.scrollWidth;
     }
 
     public zoomIn(): void {
@@ -448,10 +397,6 @@ export class CropView extends Drawer {
 
         this.isZoomFitted = true;
 
-        /*if (detectIE() !== false) {
-            zoom(1);
-            return;
-        }*/
 
         var cr = this.container.getBoundingClientRect();
         var ir = { width: this.overlay.width, height: this.overlay.height };
@@ -460,40 +405,11 @@ export class CropView extends Drawer {
         var fh = cr.height / ir.height;
         var f = Math.min(fw, fh);
 
-        //document.getElementById("container-canvas").style["width"] = cr.width + "px";
 
         this.zoom(f, shouldUpdate);
-        //console.log("---");
-        //console.log("zoom1: ", nr.height / ir.height);
-
-        /*window.requestAnimationFrame(function() {
-    
-            var delta = container.scrollWidth - container.clientWidth;
-            //console.log("dx: ", delta);
-        
-            if (delta > 0) {
-                nr.width -= delta;
-                nr.height -= (ir.height / ir.width) * delta;
-                zoom(nr.height / ir.height);
-                //console.log("zoomx: ", nr.height / ir.height);
-            }
-        
-            delta = container.scrollHeight - container.clientHeight;
-            //console.log("dy: ", delta);
-        
-            if (delta > 0) {
-                nr.height -= delta;
-                nr.width -= (ir.width / ir.height) * delta;
-        
-                zoom(nr.height / ir.height);
-                //console.log("zoomy: ", nr.height / ir.height);
-            }
-    
-        });*/
     }
 
     public rotate(deg?: number, shouldUpdate: boolean = true): void {
-        let odeg = this.currentRotation;
         if (deg === undefined) deg = this.currentRotation;
 
         this.currentRotation = deg;
@@ -525,21 +441,6 @@ export class CropView extends Drawer {
         size.multiply(r.size.dividedBy(or));
         this.overlay.resize(size, false);
 
-        /*let circleMagnitude = Math.sqrt(
-            Math.pow(this.overlay.width - circle.cx(), 2) +
-            Math.pow(this.overlay.height - circle.cy(), 2)
-        );
-    
-        let rad = ((deg - 90) / 180) * Math.PI;
-        let orad = ((odeg - 90) / 180) * Math.PI;
-    
-        let cdx = Math.cos(rad) - Math.cos(orad);
-        let cdy = Math.sin(rad) - Math.sin(orad);
-        cdx *= circleMagnitude;
-        cdy *= circleMagnitude;
-    
-        circle.x += cdx;
-        circle.y += cdy;*/
 
         this.zoomFit(false, shouldUpdate);
         this.circle.validate();
@@ -682,20 +583,7 @@ export class CropView extends Drawer {
     }
 
     private getMouseAction(x: number, y: number): MouseAction {
-        let mousePoint = new Point(x, y);
         if (this.circle.containsPoint(new Point(x, y))) {
-            // this logic for non-square crop area (aspect ratio != 1:1)
-            /*let handleSize = this.circle.radius.min / 2;
-            let _rb = (p1, p2) => Rectangle.between(p1, p2);
-            let _con = (r : Rectangle) => r.containsPoint(mousePoint);
-            let grabbing = (p1 : Point, toAdd : Point | number) => _con(_rb(p1, p1.plus(toAdd)));
-            
-            let grabbingHandle = (
-                grabbing(this.circle.topLeft, handleSize) ||
-                grabbing(this.circle.topRight, new Point(-handleSize, handleSize)) ||
-                grabbing(this.circle.bottomLeft, new Point(handleSize, -handleSize)) ||
-                grabbing(this.circle.bottomRight, -handleSize)
-            );*/
 
             let grabbingHandle = this.circle.center.distanceTo(new Point(x, y)) >= this.circle.radius.x;
 
@@ -786,8 +674,6 @@ export class CropView extends Drawer {
 
         if (!settings.state.resizeLock) {
             this.resizeAnchor = this.circle.getPointFromAnchor(anchor).minus(this.resizeOffset);
-            let size = this.circle.size.copy();
-
             let r = Rectangle.between(new Point(x, y), this.resizeAnchor);
             //r.round();
             this.circle.fitInsideGreedy(r, anchor, this.outerRect);

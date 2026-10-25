@@ -6,26 +6,23 @@ import {
     createElement,
     hideElement,
     showElement,
-    getIEVersion,
 } from './util'
 import { LabelSlider } from './labeledslider'
 import { doFooterThings, showTutorial } from './footer'
 import { GlobalEvents } from './eventclass'
 import { settings } from './state'
-import { TextDialog } from './textdialog'
 import { DragDrop } from './dragdrop'
 import { ImagePasted } from './imagepasted'
 import { Point } from './point'
 import { KeyManager } from './keymanager'
 import { Border, GradientInfo } from './borders'
-import { Canvas } from './canvas'
 import { GradientEditButton } from './gradientedit'
 import { showAlert, showPrompt } from './nativedialogs'
 import { Dropdown } from './dropdown'
 import { ColorPicker } from './colorpicker'
 import { DiscordProfile } from './discordprofile'
 import { DiscordPicker } from './discordpicker'
-import { DiscordLook, defaultLook } from './discordlook'
+import { DiscordLook } from './discordlook'
 
 export type { Settings } from './state'
 
@@ -118,14 +115,6 @@ export class AvatarCropper extends Widget {
         })        
 
         document.body.appendChild(this.textOverlay)
-
-        if (getIEVersion() !== false && !settings.state.dismissedIE) {
-            showAlert(
-                "hey so your browser isn't really supported ... things should still work but they will be slower/ugly due to how internet explorer/edge function (They don't conform to web standards). i'd recommend switching to firefox or chrome!! but you don't have to if you don't want to. this is the only time you'll see this message unless u clear ur cache or something. ok bye",
-            )
-
-            settings.set({ dismissedIE: true })
-        }
     }
 
     public loadFromFile(file: File): void {
@@ -149,7 +138,7 @@ export class AvatarCropper extends Widget {
         )
         openFile.id = 'openInput'
         openFile.type = 'file'
-        openFile.addEventListener('change', e => {
+        openFile.addEventListener('change', () => {
             if (openFile.files && openFile.files[0]) {
                 this.openFile(openFile.files[0])
             }
@@ -608,9 +597,6 @@ export class AvatarCropper extends Widget {
         )
         this.cropView.container.style.width = 'calc(100% - ' + sideWidth + 'px)'
         this.cropView.reactTMToRefresh()
-
-        let previewHeight = this.previews.height + this.previews.padding * 2
-        //this.menu.style.height = "calc(100% - " + previewHeight + "px)";
     }
 }
 

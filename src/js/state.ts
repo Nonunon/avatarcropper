@@ -10,7 +10,6 @@ export interface Settings {
     banneroutlinesEnabled: boolean
     antialias: boolean
     dismissedTutorial: boolean
-    dismissedIE: boolean
     dismissedCookie: boolean
     guidesEnabled: boolean
     resizeLock: boolean
@@ -32,7 +31,6 @@ export const settings = new Store<Settings>({
     banneroutlinesEnabled: false,
     antialias: true,
     dismissedTutorial: false,
-    dismissedIE: false,
     dismissedCookie: false,
     guidesEnabled: true,
     resizeLock: false,
