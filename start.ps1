@@ -1,7 +1,7 @@
 # Starts Avatar Cropper locally. Double-click start.cmd, or run:
 #   .\start.ps1            install if needed, then start the dev server and open the browser
 #   .\start.ps1 -Sync      also refresh the Discord catalog, fonts and synced users
-#   .\start.ps1 -Clean     wipe Parcel's cache first (fixes most "it's acting weird" builds)
+#   .\start.ps1 -Clean     wipe Vite's cache and the old build first
 #   .\start.ps1 -Port 4321 -NoBrowser
 
 param(
@@ -22,9 +22,9 @@ if (-not $node) {
     Say "Node.js isn't installed. Get the LTS from https://nodejs.org, then run this again." Red
     exit 1
 }
-$major = [int]((node -v).TrimStart('v').Split('.')[0])
-if ($major -lt 18) {
-    Say "Node $(node -v) is too old, version 18 or newer is needed. Update from https://nodejs.org." Red
+$version = [version]((node -v).TrimStart('v'))
+if ($version -lt [version]'20.19.0' -or ($version.Major -eq 21) -or ($version.Major -eq 22 -and $version -lt [version]'22.12.0')) {
+    Say "Node $(node -v) is too old, version 20.19 or 22.12+ is needed. Update from https://nodejs.org." Red
     exit 1
 }
 
@@ -37,8 +37,8 @@ if (-not (Test-Path $stamp) -or (Get-Item 'package-lock.json').LastWriteTime -gt
 }
 
 if ($Clean) {
-    Say 'Clearing Parcel cache...' Cyan
-    Remove-Item -Recurse -Force '.parcel-cache*', 'dist', 'dist-*' -ErrorAction SilentlyContinue
+    Say 'Clearing Vite cache...' Cyan
+    Remove-Item -Recurse -Force 'node_modules\.vite', 'dist' -ErrorAction SilentlyContinue
 }
 
 # Discord preview data. the sync runs in its own window so the site starts right away //
@@ -69,8 +69,6 @@ if ($busy) {
 }
 
 Say "Starting Avatar Cropper on http://localhost:$Port (Ctrl+C to stop)" Green
-$parcelArgs = @('parcel', 'src/index.pug', '--port', $Port)
-# a second copy on another port gets its own output and cache, sharing them corrupts the first one's build //
-if ($Port -ne 1234) { $parcelArgs += @('--dist-dir', "dist-$Port", '--cache-dir', ".parcel-cache-$Port") }
-if (-not $NoBrowser) { $parcelArgs += '--open' }
-npx @parcelArgs
+$viteArgs = @('vite', '--port', $Port, '--strictPort')
+if (-not $NoBrowser) { $viteArgs += '--open' }
+npx @viteArgs

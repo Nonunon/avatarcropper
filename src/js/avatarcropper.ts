@@ -1,3 +1,4 @@
+import '../css/style.stylus'
 import { Widget } from './widget'
 import { CropView } from './cropview'
 import { Previews } from './previews'

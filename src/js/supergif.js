@@ -62,15 +62,8 @@
 			http://humpy77.deviantart.com/journal/Frame-Delay-Times-for-Animated-GIFs-214150546
 
 */
-(function (root, factory) {
-    if (typeof define === 'function' && define.amd) {
-        define([], factory);
-    } else if (typeof exports === 'object') {
-        module.exports = factory();
-    } else {
-        root.SuperGif = factory();
-    }
-}(this, function () {
+// wrapper trimmed to a plain ES module export (was UMD) //
+var SuperGif = (function () {
     var shouldAbort = false;
     var abortFn = null;
     
@@ -1007,6 +1000,8 @@
     };
 
     return SuperGif;
-}));
+})();
+
+export default SuperGif;
 
 

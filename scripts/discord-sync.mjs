@@ -28,8 +28,6 @@ import { fileURLToPath } from 'url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'public', 'discord')
-// parcel only copies public/ on a rebuild, so a running dev server gets fresh files straight away too
-const DIST = path.join(ROOT, 'dist', 'discord')
 const CONFIG_PATH = path.join(ROOT, 'discord.config.json')
 const SEEDS_DIR = path.join(ROOT, 'discord-seeds')
 const DROP_IN_FONTS = path.join(ROOT, 'discord-fonts')
@@ -73,12 +71,9 @@ function readJson(file, fallback) {
 }
 
 function writeFile(rel, data) {
-    for (let dir of [OUT, DIST]) {
-        if (dir === DIST && !fs.existsSync(path.dirname(DIST))) continue
-        let dest = path.join(dir, rel)
-        fs.mkdirSync(path.dirname(dest), { recursive: true })
-        fs.writeFileSync(dest, data)
-    }
+    let dest = path.join(OUT, rel)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.writeFileSync(dest, data)
 }
 
 function writeJson(file, data) {
@@ -104,8 +99,6 @@ async function download(url, rel) {
             throw new Error(`${res.status} for ${url}`)
         }
         writeFile(rel, Buffer.from(await res.arrayBuffer()))
-    } else if (fs.existsSync(path.dirname(DIST)) && !fs.existsSync(path.join(DIST, rel))) {
-        writeFile(rel, fs.readFileSync(dest))
     }
     return 'discord/' + rel.split(path.sep).join('/')
 }

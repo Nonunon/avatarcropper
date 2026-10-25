@@ -7,7 +7,16 @@
         "strict": false,
         "skipLibCheck": true,
         "allowJs": false,
-        "lib": ["es2020", "dom", "dom.iterable"]
+        "lib": [
+            "es2020",
+            "dom",
+            "dom.iterable"
+        ],
+        "types": [
+            "vite/client"
+        ]
     },
-    "include": ["src/**/*.ts"]
+    "include": [
+        "src/**/*.ts"
+    ]
 }

@@ -9,28 +9,19 @@
         "url": "https://github.com/sapic/avatarcropper.git"
     },
     "scripts": {
-        "build": "npx parcel build src/index.pug --public-url ./",
-        "start": "npx parcel src/index.pug",
+        "dev": "vite",
+        "start": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "typecheck": "tsc --noEmit",
         "discord:catalog": "node scripts/discord-sync.mjs catalog",
         "discord:users": "node scripts/discord-sync.mjs users",
         "discord:fonts": "node scripts/discord-sync.mjs fonts"
     },
-    "staticFiles": {
-        "staticPath": "public"
-    },
     "devDependencies": {
-        "@parcel/config-default": "^2.16.4",
-        "@parcel/packager-raw-url": "^2.16.4",
-        "@parcel/packager-xml": "^2.16.4",
-        "@parcel/transformer-pug": "^2.16.4",
-        "@parcel/transformer-sass": "^2.16.4",
-        "@parcel/transformer-stylus": "^2.16.4",
-        "@parcel/transformer-webmanifest": "^2.16.4",
-        "@parcel/transformer-xml": "^2.16.4",
         "@types/node": "^22.20.5",
-        "parcel": "^2.16.4",
-        "parcel-reporter-static-files-copy": "^1.4.0",
         "stylus": "^0.59.0",
-        "typescript": "^5.9.3"
+        "typescript": "^5.9.3",
+        "vite": "^8.3.5"
     }
 }

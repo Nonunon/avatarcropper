@@ -1,22 +1,8 @@
 // gif.js 0.2.0 - https://github.com/jnordberg/gif.js
+// wrapper trimmed to a plain ES module export (was UMD) //
+var GIF;
 (function(f) {
-    if (typeof exports === "object" && typeof module !== "undefined") {
-        module.exports = f()
-    } else if (typeof define === "function" && define.amd) {
-        define([], f)
-    } else {
-        var g;
-        if (typeof window !== "undefined") {
-            g = window
-        } else if (typeof global !== "undefined") {
-            g = global
-        } else if (typeof self !== "undefined") {
-            g = self
-        } else {
-            g = this
-        }
-        g.GIF = f()
-    }
+    GIF = f()
 })(function() {
     var define, module, exports;
     return function e(t, n, r) {
@@ -624,4 +610,5 @@
         }]
     }, {}, [3])(3)
 });
-//# sourceMappingURL=gif.js.map
+
+export default GIF;
