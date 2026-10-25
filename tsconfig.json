@@ -1,17 +1,13 @@
 {
     "compilerOptions": {
-        "composite": true,
-        "declaration": true,
-        "declarationMap": true,
-        "outDir": "./dist",
-        "module": "commonjs",
-        "target": "ES5",
+        "noEmit": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "target": "ES2020",
         "strict": false,
-        "emitDecoratorMetadata": true,
-        "experimentalDecorators": true,
-        "sourceMap": true,
-        "lib": ["es6", "dom"],
-        "rootDir": "src"
+        "skipLibCheck": true,
+        "allowJs": false,
+        "lib": ["es2020", "dom", "dom.iterable"]
     },
     "include": ["src/**/*.ts"]
 }
