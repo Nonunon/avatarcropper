@@ -29,8 +29,8 @@ export interface DiscordLook {
 }
 
 export interface DiscordCatalog {
-    decorations: (DiscordDecoration & { asset: string })[]
-    nameplates: DiscordNameplate[]
+    decorations: (DiscordDecoration & { asset: string, category?: string })[]
+    nameplates: (DiscordNameplate & { category?: string })[]
 }
 
 export interface DiscordUserLook {

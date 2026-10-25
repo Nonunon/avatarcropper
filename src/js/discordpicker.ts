@@ -130,7 +130,7 @@ export class DiscordPicker extends ClosableDialog {
             tile.classList.toggle('toggled', !!this.look.decoration && this.look.decoration.animated === d.animated)
             tile.addEventListener('click', () => select(tile, { name: d.name, animated: d.animated, static: d.static }))
             grid.appendChild(tile)
-            tiles.push({ el: tile, name: d.name.toLowerCase() })
+            tiles.push({ el: tile, name: (d.name + ' ' + (d.category || '')).toLowerCase() })
         })
 
         this.searchBox(q => tiles.forEach(t => t.el.style.display = t.name.includes(q) ? '' : 'none'))
@@ -191,9 +191,9 @@ export class DiscordPicker extends ClosableDialog {
             })
 
             tile.classList.toggle('toggled', !!this.look.nameplate && this.look.nameplate.name === n.name)
-            tile.addEventListener('click', () => select(tile, { name: n.name, video: n.video, static: n.static }))
+            tile.addEventListener('click', () => select(tile, { name: n.name, video: n.video, static: n.static, palette: n.palette }))
             list.appendChild(tile)
-            tiles.push({ el: tile, name: n.name.toLowerCase() })
+            tiles.push({ el: tile, name: (n.name + ' ' + (n.category || '')).toLowerCase() })
         })
 
         this.searchBox(q => tiles.forEach(t => t.el.style.display = t.name.includes(q) ? '' : 'none'))
