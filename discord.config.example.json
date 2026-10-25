@@ -1,0 +1,12 @@
+{
+    "botToken": "",
+    "userIds": [],
+    "apiBase": "https://discord.com/api/v10",
+    "githubToken": "",
+    "mirror": {
+        "repo": "JulesZYTB/discord-collectibles-downloader",
+        "branch": "main",
+        "root": "discord_collectibles"
+    },
+    "download": false
+}

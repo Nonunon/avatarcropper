@@ -6,3 +6,7 @@ node_modules
 *.tsbuildinfo
 .vscode/settings.json
 dist/
+
+# Discord preview data (bot token and synced collectibles)
+discord.config.json
+public/discord/
