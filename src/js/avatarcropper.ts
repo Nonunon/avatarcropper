@@ -40,6 +40,9 @@ export interface Settings {
     resizeLock: boolean
     borderSize: number
     borderPresets: GradientInfo[]
+    borderType: 'none' | 'solid' | 'gradient'
+    borderColor: string
+    borderGradient: GradientInfo
     discordPreview: boolean
     discordLook: DiscordLook
 }
@@ -81,6 +84,9 @@ export class AvatarCropper extends Widget {
         resizeLock: false,
         borderSize: 0.05,
         borderPresets: Border.defaults,
+        borderType: 'none',
+        borderColor: '#FFAA00',
+        borderGradient: Border.defaults[0],
         discordPreview: false,
         discordLook: defaultLook
     }
@@ -90,8 +96,23 @@ export class AvatarCropper extends Widget {
 
         this.loadSettings()
         Border.size = AvatarCropper.settings.borderSize
-        console.log(AvatarCropper.settings.borderSize)
+        Border.color = AvatarCropper.settings.borderColor
+        Border.gradient = AvatarCropper.settings.borderGradient
+        Border.type = AvatarCropper.settings.borderType
+
+        // remember the border between visits, saved a beat after the last change so color drags don't hammer storage //
+        let borderSave: number
+        GlobalEvents.on('borderchange', () => {
+            clearTimeout(borderSave)
+            borderSave = window.setTimeout(() => {
+                AvatarCropper.settings.borderType = Border.type
+                AvatarCropper.settings.borderColor = Border.color
+                AvatarCropper.settings.borderGradient = Border.gradient
+                AvatarCropper.saveSettings()
+            }, 300)
+        })
         this.constructMenu()
+        this.borderEditors()
         this.cropView = new CropView(AvatarCropper.settings)
         // flipping redraws through a canvas, which would flatten an animation //
         this.cropView.on('imagechange', () => {
