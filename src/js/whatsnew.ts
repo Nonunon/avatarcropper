@@ -4,6 +4,15 @@ import { ClosableDialog } from "./closabledialog";
 export class WhatsNewDialog extends ClosableDialog {
     private list =
         {
+            "October 2026":
+                [
+                    "Discord Profile Preview: see your crop with avatar decorations, nameplates and styled display names, all live",
+                    "Animated WebP, APNG and AVIF can be cropped now, not just GIFs",
+                    "Animations can be saved as WebP or APNG too, which keep full color and real transparency",
+                    "Previews and saved images are drawn by the same code, so what you see is exactly what you save",
+                    "New dropdowns, color picker and sliders that match the site, and your border choice is remembered",
+                    "Faster GIF saving, and a broken image file no longer freezes the page"
+                ],
             "October 2022":
                 [
                     "Holy heck, a brand new feature! You can now crop Discord profile banners right here! Isn't that just sooo cool!?",
