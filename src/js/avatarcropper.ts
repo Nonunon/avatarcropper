@@ -38,6 +38,7 @@ export class AvatarCropper extends Widget {
     private toggleMenuButton: HTMLElement
     private flipHButton: HTMLElement
     private flipVButton: HTMLElement
+    private rotationSlider: LabelSlider
     private antialiasButton: HTMLElement
     private textOverlay: HTMLLabelElement
     private borderSelect: Dropdown;
@@ -55,11 +56,11 @@ export class AvatarCropper extends Widget {
         this.constructMenu()
         this.borderEditors()
         this.cropView = new CropView()
-        // flipping redraws through a canvas, which would flatten an animation //
-        this.cropView.on('imagechange', () => {
-            let animated = this.cropView.currentFileType === 'gif'
-            this.flipHButton.style.display = animated ? 'none' : ''
-            this.flipVButton.style.display = animated ? 'none' : ''
+        // flips run the rotation the other way and a new image starts at 0, so keep the slider honest //
+        this.cropView.on('update', (source: string) => {
+            if (source === 'flip' || source === 'image change') {
+                this.rotationSlider.value = this.cropView.rotation
+            }
         })
         this.previews = new Previews(this.cropView)
 
@@ -235,6 +236,7 @@ export class AvatarCropper extends Widget {
         this.menu.appendChild(zoomBar)
 
         let rSlider = new LabelSlider(-180, 180, 1, 'Rotation', 'item rotation')
+        this.rotationSlider = rSlider
         rSlider.on('slide', (deg: number) => {
             if (Math.abs(deg - 90) <= 2) {
                 deg = 90
