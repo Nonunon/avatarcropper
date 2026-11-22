@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "avatarcropper", "runtimeExecutable": "npx", "runtimeArgs": ["vite", "--port", "1234", "--strictPort"], "port": 1234 }
+  ]
+}
